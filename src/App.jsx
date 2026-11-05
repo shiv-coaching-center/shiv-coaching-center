@@ -1,14 +1,23 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { auth, db, firebaseConfigured } from './firebase'
+import { auth, db, firebaseConfigured, studentAuth } from './firebase'
 import { studentAuthEmail, pct, resultStatus, rankRows, dateKey } from './utils'
-import { signInWithEmailAndPassword, signOut, onAuthStateChanged, updatePassword } from 'firebase/auth'
-import { collection, addDoc, getDoc, getDocs, doc, setDoc, updateDoc, deleteDoc, query, where, orderBy, serverTimestamp } from 'firebase/firestore'
+import { signInWithEmailAndPassword, signOut, onAuthStateChanged, updatePassword, createUserWithEmailAndPassword, deleteUser } from 'firebase/auth'
+import { collection, addDoc, getDoc, getDocs, doc, setDoc, updateDoc, deleteDoc, query, where, orderBy, serverTimestamp, writeBatch } from 'firebase/firestore'
 import { BookOpen, LayoutDashboard, Users, ClipboardList, Trophy, CalendarCheck, Bell, Settings, LogOut, Menu, Moon, Sun, Search, Plus, Download, Share2, GraduationCap, LockKeyhole, ChartNoAxesCombined } from 'lucide-react'
 import { jsPDF } from 'jspdf'
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts'
 
 const BRAND = 'SHIV COACHING CENTER'
 const empty = (v='') => v ?? ''
+function makeStudentPassword(){
+  const groups=['ABCDEFGHJKLMNPQRSTUVWXYZ','abcdefghijkmnopqrstuvwxyz','23456789','!@#$%*?']
+  const pick=(chars)=>chars[crypto.getRandomValues(new Uint32Array(1))[0]%chars.length]
+  const chars=groups.map(pick)
+  const all=groups.join('')
+  while(chars.length<12) chars.push(pick(all))
+  for(let i=chars.length-1;i>0;i--){const j=crypto.getRandomValues(new Uint32Array(1))[0]%(i+1);[chars[i],chars[j]]=[chars[j],chars[i]]}
+  return chars.join('')
+}
 function Button({children, onClick, kind='primary', disabled=false, type='button'}) { return <button type={type} disabled={disabled} onClick={onClick} className={`btn ${kind}`}>{children}</button> }
 function Field({label, ...props}) { return <label className="field"><span>{label}</span><input {...props}/></label> }
 function Select({label, children, ...props}) { return <label className="field"><span>{label}</span><select {...props}>{children}</select></label> }
@@ -21,7 +30,7 @@ export default function App() {
   const [lang,setLang]=useState(localStorage.getItem('scc-lang')||'hi'), [busy,setBusy]=useState(false), [message,setMessage]=useState(''), [error,setError]=useState(false)
   const [email,setEmail]=useState(''), [password,setPassword]=useState(''), [roll,setRoll]=useState('')
   const [students,setStudents]=useState([]), [tests,setTests]=useState([]), [results,setResults]=useState([]), [notices,setNotices]=useState([]), [attendance,setAttendance]=useState([])
-  const [search,setSearch]=useState(''), [form,setForm]=useState({})
+  const [search,setSearch]=useState(''), [form,setForm]=useState({}), [newStudentCredentials,setNewStudentCredentials]=useState(null)
   const t=(hi,en)=>lang==='hi'?hi:en
   const say=(m,e=false)=>{setMessage(m);setError(e);setTimeout(()=>setMessage(''),6000)}
 
@@ -91,50 +100,26 @@ export default function App() {
   useEffect(()=>{ if(user && role) loadData() },[user,role])
 
   async function loadData(){
-    const rowsOf=(snap)=>snap.docs.map(d=>({id:d.id,...d.data()}))
-    // हर collection अलग से लोड होती है। किसी एक में permission-denied आए तो बाकी का डेटा नहीं रुकता,
-    // और संदेश में साफ़ दिखता है कि कौन सी collection की समस्या है।
-    // एक से ज़्यादा query दी गई हों तो पहली fail होने पर अगली आज़माई जाती है।
-    const load=async(label,setter,...makers)=>{
-      let lastError=null
-      for(const make of makers){
-        try{
-          setter(rowsOf(await getDocs(make())))
-          return null
-        }catch(e){lastError=e}
-      }
-      return {label,code:(lastError&&(lastError.code||lastError.message))||'unknown'}
-    }
-    const problems=[]
-    try{
+    try {
       if(role==='admin'){
-        const out=await Promise.all([
-          load('students',setStudents,()=>collection(db,'students')),
-          load('tests',setTests,()=>collection(db,'tests')),
-          load('results',setResults,()=>collection(db,'results')),
-          load('notices',setNotices,()=>collection(db,'notices')),
-          load('attendance',setAttendance,()=>collection(db,'attendance'))
+        const [s,ts,rs,ns,at]=await Promise.all([
+          getDocs(collection(db,'students')),getDocs(collection(db,'tests')),getDocs(collection(db,'results')),getDocs(collection(db,'notices')),getDocs(collection(db,'attendance'))
         ])
-        problems.push(...out.filter(Boolean))
+        setStudents(s.docs.map(d=>({id:d.id,...d.data()})));setTests(ts.docs.map(d=>({id:d.id,...d.data()})));setResults(rs.docs.map(d=>({id:d.id,...d.data()})));setNotices(ns.docs.map(d=>({id:d.id,...d.data()})));setAttendance(at.docs.map(d=>({id:d.id,...d.data()})))
       } else {
-        let mine=[]
-        const sp=await load('students',(rows)=>{mine=rows;setStudents(rows)},()=>query(collection(db,'students'),where('authUid','==',user.uid)))
-        if(sp) problems.push(sp)
+        const st=await getDocs(query(collection(db,'students'),where('authUid','==',user.uid)))
+        const mine=st.docs.map(d=>({id:d.id,...d.data()}));setStudents(mine)
         if(mine[0]){
-          const sid=mine[0].id
-          const out=await Promise.all([
-            load('results',setResults,()=>query(collection(db,'results'),where('studentId','==',sid),where('publicationStatus','==','Published'))),
-            load('attendance',setAttendance,()=>query(collection(db,'attendance'),where('studentId','==',sid))),
-            load('notices',setNotices,
-              ()=>query(collection(db,'notices'),where('status','==','Published')),
-              ()=>query(collection(db,'notices'),where('status','==','Published'),where('visibility','==','Students'))),
-            load('tests',setTests,()=>query(collection(db,'tests'),where('status','==','Published')))
+          const [rs,at,ns,ts]=await Promise.all([
+            getDocs(query(collection(db,'results'),where('studentId','==',mine[0].id),where('publicationStatus','==','Published'))),
+            getDocs(query(collection(db,'attendance'),where('studentId','==',mine[0].id))),
+            getDocs(query(collection(db,'notices'),where('status','==','Published'))),
+            getDocs(query(collection(db,'tests'),where('status','==','Published')))
           ])
-          problems.push(...out.filter(Boolean))
+          setResults(rs.docs.map(d=>({id:d.id,...d.data()})));setAttendance(at.docs.map(d=>({id:d.id,...d.data()})));setNotices(ns.docs.map(d=>({id:d.id,...d.data()})));setTests(ts.docs.map(d=>({id:d.id,...d.data()})))
         }
       }
-    } catch(e){problems.push({label:'डेटा',code:e.code||e.message})}
-    if(problems.length) say('डेटा लोड नहीं हुआ: '+problems.map(p=>`${p.label} (${p.code})`).join(', '),true)
+    } catch(e){say('डेटा लोड नहीं हुआ: '+(e.code||e.message),true)}
   }
 
   async function login(e){
@@ -161,13 +146,51 @@ export default function App() {
 
   async function logout(){await signOut(auth);setPage('dashboard');setPassword('')}
   async function addStudent(e){
-    e.preventDefault();setBusy(true)
+    e.preventDefault()
+    if(!auth || !db || !studentAuth){say('Firebase Authentication तैयार नहीं है। कनेक्शन जाँचें।',true);return}
+    setBusy(true);setNewStudentCredentials(null)
+    let createdUser=null
     try{
       const r=String(form.rollNumber||'').trim()
-      if(students.some(s=>s.rollNumber===r)) throw new Error('यह Roll Number पहले से मौजूद है।')
-      await addDoc(collection(db,'students'),{fullName:form.fullName,rollNumber:r,className:form.className||'12th',stream:form.stream||'Science',mobileNumber:form.mobileNumber||'',admissionDate:form.admissionDate||dateKey(),status:'Active',accountStatus:'Pending',authUid:'',createdAt:serverTimestamp()})
-      setForm({});await loadData();say('Student Profile जुड़ गई। अब Firebase Console में इसका Login Account बनाकर UID जोड़ें।')
-    }catch(e){say(e.message,true)}finally{setBusy(false)}
+      const normalizedRoll=r.toLowerCase()
+      if(!r) throw new Error('Roll Number दर्ज करें।')
+      if(!String(form.fullName||'').trim()) throw new Error('स्टूडेंट का नाम दर्ज करें।')
+      if(students.some(s=>String(s.rollNumber||'').trim().toLowerCase()===normalizedRoll)) throw new Error('यह Roll Number पहले से मौजूद है।')
+      const existing=await getDocs(query(collection(db,'students'),where('rollNumber','==',r)))
+      if(!existing.empty) throw new Error('यह Roll Number पहले से मौजूद है।')
+
+      const loginEmail=studentAuthEmail(r)
+      const generatedPassword=makeStudentPassword()
+      const credential=await createUserWithEmailAndPassword(studentAuth,loginEmail,generatedPassword)
+      createdUser=credential.user
+
+      const studentRef=doc(collection(db,'students'))
+      const userRef=doc(db,'users',createdUser.uid)
+      const batch=writeBatch(db)
+      batch.set(studentRef,{fullName:String(form.fullName).trim(),rollNumber:r,className:form.className||'12th',stream:form.stream||'Science',mobileNumber:form.mobileNumber||'',admissionDate:form.admissionDate||dateKey(),status:'Active',accountStatus:'Active',authUid:createdUser.uid,createdAt:serverTimestamp()})
+      batch.set(userRef,{role:'student',isActive:true,studentId:studentRef.id,createdAt:serverTimestamp()})
+      await batch.commit()
+
+      setNewStudentCredentials({name:String(form.fullName).trim(),rollNumber:r,email:loginEmail,password:generatedPassword})
+      setForm({});await loadData();say('स्टूडेंट का Login Account सफलतापूर्वक बन गया।')
+      await signOut(studentAuth).catch(()=>{})
+    }catch(e){
+      if(createdUser){
+        await deleteUser(createdUser).catch(async()=>{await signOut(studentAuth).catch(()=>{})})
+      }
+      const errors={
+        'auth/email-already-in-use':'इस Roll Number का Login Account पहले से मौजूद है।',
+        'auth/invalid-email':'Login ID का ईमेल फॉर्मेट सही नहीं है।',
+        'auth/weak-password':'पासवर्ड कमजोर है। दोबारा कोशिश करें।',
+        'auth/too-many-requests':'बहुत जल्दी अकाउंट बनाए गए हैं। कुछ देर बाद कोशिश करें।',
+        'auth/network-request-failed':'इंटरनेट कनेक्शन जाँचें और दोबारा कोशिश करें.'
+      }
+      say(errors[e.code]||('स्टूडेंट अकाउंट नहीं बन पाया: '+(e.code||e.message)),true)
+    }finally{setBusy(false)}
+  }
+  async function copyCredential(value,label){
+    try{await navigator.clipboard.writeText(value);say(label+' कॉपी हो गया।')}
+    catch{say('कॉपी नहीं हुआ। टेक्स्ट को दबाकर Copy चुनें।',true)}
   }
   async function addTest(e){
     e.preventDefault();setBusy(true)
@@ -249,7 +272,7 @@ export default function App() {
   if(!user)return <div className="loginpage"><div className="loginhero"><div className="brandmark"><GraduationCap size={36}/></div><h1>{BRAND}</h1><p>ज्ञान • अनुशासन • सफलता</p></div><div className="loginbox"><h2>{t('पोर्टल में लॉगिन करें','Portal Login')}</h2><Notice message={message} error={error}/><div className="tabs"><button type="button" className={role!=='student'?'active':''} onClick={()=>{setRole('admin');setMessage('')}}>Admin</button><button type="button" className={role==='student'?'active':''} onClick={()=>{setRole('student');setMessage('')}}>Student</button></div><form onSubmit={login}>{role==='student'?<Field label="Roll Number" value={roll} onChange={e=>setRoll(e.target.value)} required placeholder="जैसे 12001"/>:<Field label="Admin Email" type="email" value={email} onChange={e=>setEmail(e.target.value)} required placeholder="Admin Email"/>}<Field label="Password" type="password" value={password} onChange={e=>setPassword(e.target.value)} required placeholder="Password"/><Button type="submit" disabled={busy}>{busy?'Please wait...':'Login'}</Button></form><p className="hint">Student password भूलने पर Coaching Admin से संपर्क करें।</p></div></div>
 
   return <div className="app"><aside className={menu?'sidebar open':'sidebar'}><div className="sidebrand"><div className="brandmark"><GraduationCap/></div><div><b>SHIV COACHING</b><small>CENTER PORTAL</small></div></div><div className="navlabel">{role==='admin'?'ADMIN MENU':'STUDENT MENU'}</div>{nav.map(([id,label,Icon])=><button key={id} className={`navitem ${page===id?'selected':''}`} onClick={()=>{setPage(id);setMenu(false)}}><Icon size={18}/>{label}</button>)}<div className="sidebottom"><button className="navitem" onClick={()=>setDark(!dark)}>{dark?<Sun size={18}/>:<Moon size={18}/>} {dark?'Light Mode':'Dark Mode'}</button><button className="navitem" onClick={()=>setLang(lang==='hi'?'en':'hi')}>文 {lang==='hi'?'English':'हिन्दी'}</button><button className="navitem" onClick={logout}><LogOut size={18}/> Logout</button></div></aside><main className="main"><header className="topbar"><button className="iconbtn mobileonly" onClick={()=>setMenu(!menu)}><Menu/></button><div><b>{BRAND}</b><small>{role==='admin'?'Administrator':'Student Portal'}</small></div><button className="iconbtn" onClick={()=>setDark(!dark)}>{dark?<Sun/>:<Moon/>}</button></header><div className="content"><Notice message={message} error={error}/>{page==='dashboard'&&<><div className="welcome"><div><span className="eyebrow">WELCOME BACK</span><h1>{role==='admin'?'Admin Dashboard':`नमस्ते, ${myStudent?.fullName||'Student'}!`}</h1><p>आपके कोचिंग सेंटर का पूरा अकादमिक रिकॉर्ड एक जगह।</p></div><div className="datepill">{dateKey()}</div></div><div className="stats">{(role==='admin'?[['Total Students',students.length],['Total Tests',tests.length],['Published Results',results.filter(r=>r.publicationStatus==='Published').length],['Average',`${avg}%`]]:[['My Tests',results.length],['Average',`${avg}%`],['Attendance',`${attendance.length?Math.round(attendance.filter(a=>a.status==='Present').length/attendance.length*100):0}%`],['Notices',notices.length]]).map(([a,b])=><div className="stat" key={a}><small>{a}</small><strong>{b}</strong></div>)}</div><div className="panel"><h3>{role==='admin'?'Quick Actions':'Recent Results'}</h3>{role==='admin'?<div className="quick">{[['students','Add Student'],['tests','Create Test'],['marks','Enter Marks'],['attendance','Mark Attendance'],['notices','Add Notice']].map(([p,l])=><Button key={p} kind="soft" onClick={()=>setPage(p)}><Plus size={16}/>{l}</Button>)}</div>:<ResultList rows={results} tests={tests} pdf={pdf} share={share}/>}</div><div className="panel"><h3>Latest Notices</h3><NoticeList rows={notices}/></div></>}
-  {page==='students'&&role==='admin'&&<><PageTitle title="Student Management" sub="विद्यार्थियों का रिकॉर्ड जोड़ें और मैनेज करें"/><div className="panel"><h3>Add Student</h3><form className="formgrid" onSubmit={addStudent}><Field label="Full Name" value={empty(form.fullName)} onChange={e=>setForm({...form,fullName:e.target.value})} required/><Field label="Roll Number" value={empty(form.rollNumber)} onChange={e=>setForm({...form,rollNumber:e.target.value})} required/><Select label="Class" value={form.className||'12th'} onChange={e=>setForm({...form,className:e.target.value})}><option>12th</option><option>11th</option><option>10th</option></Select><Select label="Stream" value={form.stream||'Science'} onChange={e=>setForm({...form,stream:e.target.value})}><option>Science</option><option>Arts</option><option>Commerce</option></Select><Field label="Mobile Number" value={empty(form.mobileNumber)} onChange={e=>setForm({...form,mobileNumber:e.target.value})}/><Field label="Admission Date" type="date" value={form.admissionDate||dateKey()} onChange={e=>setForm({...form,admissionDate:e.target.value})}/><div className="full"><Button type="submit" disabled={busy}>Save Student Profile</Button></div></form></div><div className="panel"><div className="panelhead"><h3>Student List ({students.length})</h3><div className="search"><Search size={16}/><input placeholder="Search name / roll" value={search} onChange={e=>setSearch(e.target.value)}/></div></div><div className="tablewrap"><table><thead><tr><th>Name</th><th>Roll</th><th>Class</th><th>Account</th><th>Status</th></tr></thead><tbody>{students.filter(s=>(s.fullName+' '+s.rollNumber).toLowerCase().includes(search.toLowerCase())).map(s=><tr key={s.id}><td>{s.fullName}</td><td>{s.rollNumber}</td><td>{s.className}</td><td>{s.accountStatus||'Pending'}</td><td>{s.status}</td></tr>)}</tbody></table></div><p className="hint">नया Student Profile सेव होने के बाद Firebase Console में synthetic email से Authentication User बनाएँ, फिर उसका UID students दस्तावेज़ के authUid में जोड़ें और accountStatus को Active करें।</p></div></>}
+  {page==='students'&&role==='admin'&&<><PageTitle title="Student Management" sub="विद्यार्थियों का रिकॉर्ड जोड़ें और मैनेज करें"/><div className="panel"><h3>Add Student</h3><form className="formgrid" onSubmit={addStudent}><Field label="Full Name" value={empty(form.fullName)} onChange={e=>setForm({...form,fullName:e.target.value})} required/><Field label="Roll Number" value={empty(form.rollNumber)} onChange={e=>setForm({...form,rollNumber:e.target.value})} required/><Select label="Class" value={form.className||'12th'} onChange={e=>setForm({...form,className:e.target.value})}><option>12th</option><option>11th</option><option>10th</option></Select><Select label="Stream" value={form.stream||'Science'} onChange={e=>setForm({...form,stream:e.target.value})}><option>Science</option><option>Arts</option><option>Commerce</option></Select><Field label="Mobile Number" value={empty(form.mobileNumber)} onChange={e=>setForm({...form,mobileNumber:e.target.value})}/><Field label="Admission Date" type="date" value={form.admissionDate||dateKey()} onChange={e=>setForm({...form,admissionDate:e.target.value})}/><div className="full"><Button type="submit" disabled={busy}>{busy?'Account बनाया जा रहा है...':'Create Student Account'}</Button></div></form></div>{newStudentCredentials&&<div className="panel"><div className="panelhead"><h3>स्टूडेंट का Login तैयार है</h3><Button kind="soft" onClick={()=>setNewStudentCredentials(null)}>बंद करें</Button></div><p><b>नाम:</b> {newStudentCredentials.name}</p><p><b>Roll Number:</b> {newStudentCredentials.rollNumber}</p><p><b>Login ID:</b> <code>{newStudentCredentials.email}</code></p><Button kind="soft" onClick={()=>copyCredential(newStudentCredentials.email,'Login ID')}>Copy Login ID</Button><p><b>Password:</b> <code>{newStudentCredentials.password}</code></p><Button kind="soft" onClick={()=>copyCredential(newStudentCredentials.password,'Password')}>Copy Password</Button><p className="hint">यह पासवर्ड केवल अभी दिखाया जा रहा है। इसे स्टूडेंट को सुरक्षित तरीके से दे दें। इस पैनल को बंद करने के बाद पासवर्ड दोबारा नहीं दिखेगा।</p></div>}<div className="panel"><div className="panelhead"><h3>Student List ({students.length})</h3><div className="search"><Search size={16}/><input placeholder="Search name / roll" value={search} onChange={e=>setSearch(e.target.value)}/></div></div><div className="tablewrap"><table><thead><tr><th>Name</th><th>Roll</th><th>Class</th><th>Account</th><th>Status</th></tr></thead><tbody>{students.filter(s=>(s.fullName+' '+s.rollNumber).toLowerCase().includes(search.toLowerCase())).map(s=><tr key={s.id}><td>{s.fullName}</td><td>{s.rollNumber}</td><td>{s.className}</td><td>{s.accountStatus||'Pending'}</td><td>{s.status}</td></tr>)}</tbody></table></div><p className="hint">नया स्टूडेंट जोड़ते ही उसका Login ID और Password अपने आप बन जाएगा। पासवर्ड केवल एक बार दिखेगा, इसलिए उसे तुरंत स्टूडेंट को दे दें।</p></div></>}
   {page==='tests'&&role==='admin'&&<><PageTitle title="Test Management" sub="Weekly, Monthly और Subject-wise Tests"/><div className="panel"><h3>Create New Test</h3><form className="formgrid" onSubmit={addTest}><Field label="Test Name" value={empty(form.testName)} onChange={e=>setForm({...form,testName:e.target.value})} required/><Select label="Test Type" value={form.testType||'Weekly'} onChange={e=>setForm({...form,testType:e.target.value})}><option>Weekly</option><option>Monthly</option><option>Subject-wise</option></Select><Select label="Subject" value={form.subject||'Physics'} onChange={e=>setForm({...form,subject:e.target.value})}>{['Physics','Chemistry','Mathematics','Biology','English','Hindi'].map(x=><option key={x}>{x}</option>)}</Select><Field label="Test Date" type="date" value={form.testDate||dateKey()} onChange={e=>setForm({...form,testDate:e.target.value})}/><Field label="Total Marks" type="number" min="1" value={empty(form.totalMarks)} onChange={e=>setForm({...form,totalMarks:e.target.value})} required/><Field label="Passing Marks" type="number" min="0" value={empty(form.passingMarks)} onChange={e=>setForm({...form,passingMarks:e.target.value})} required/><div className="full"><Button type="submit" disabled={busy}>Create Test</Button></div></form></div><div className="panel"><h3>All Tests</h3><div className="tablewrap"><table><thead><tr><th>Test</th><th>Subject</th><th>Date</th><th>Marks</th><th>Status</th></tr></thead><tbody>{tests.map(x=><tr key={x.id}><td>{x.testName}</td><td>{x.subject}</td><td>{x.testDate}</td><td>{x.totalMarks}</td><td>{x.status}</td></tr>)}</tbody></table></div></div></>}
   {page==='marks'&&role==='admin'&&<><PageTitle title="Marks Entry" sub="एक टेस्ट चुनें और सभी विद्यार्थियों के नंबर भरें"/><div className="panel"><Select label="Select Test" value={form.testId||''} onChange={e=>setForm({...form,testId:e.target.value})}><option value="">Choose test</option>{tests.map(x=><option value={x.id} key={x.id}>{x.testName} · {x.subject}</option>)}</Select><form onSubmit={saveMarks}><div className="tablewrap"><table><thead><tr><th>Student</th><th>Marks</th><th>Attendance</th></tr></thead><tbody>{students.filter(s=>s.status==='Active').map(s=><tr key={s.id}><td>{s.fullName}<small className="block">{s.rollNumber}</small></td><td><input className="markinput" type="number" min="0" value={form[`m_${s.id}`]??''} onChange={e=>setForm({...form,[`m_${s.id}`]:e.target.value})}/></td><td><select value={form[`a_${s.id}`]||'Present'} onChange={e=>setForm({...form,[`a_${s.id}`]:e.target.value})}><option>Present</option><option>Absent</option></select></td></tr>)}</tbody></table></div><Button type="submit" disabled={busy||!form.testId}>Save Marks as Draft</Button></form></div></>}
   {page==='results'&&role==='admin'&&<><PageTitle title="Result Management" sub="रिजल्ट जाँचें, प्रकाशित या Unpublish करें"/>{tests.map(test=><div className="panel" key={test.id}><div className="panelhead"><div><h3>{test.testName}</h3><small>{test.subject} · {test.testDate} · {test.totalMarks} Marks</small></div><div className="actions"><Button kind="soft" onClick={()=>publish(test.id,'Published')}>Publish</Button><Button kind="danger" onClick={()=>publish(test.id,'Draft')}>Unpublish</Button></div></div><ResultList rows={results.filter(r=>r.testId===test.id)} tests={tests} pdf={pdf} share={share}/></div>)}</>}
