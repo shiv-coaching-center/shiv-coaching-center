@@ -1,3 +1,4 @@
+
 import { initializeApp } from 'firebase/app'
 import { getAuth } from 'firebase/auth'
 import { getFirestore } from 'firebase/firestore'
@@ -10,7 +11,17 @@ const config = {
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 }
+
 export const firebaseConfigured = Boolean(config.apiKey && config.projectId && config.appId)
+
 const app = firebaseConfigured ? initializeApp(config) : null
+
 export const auth = app ? getAuth(app) : null
 export const db = app ? getFirestore(app) : null
+
+// Separate authentication instance for creating student accounts
+const studentApp = firebaseConfigured
+  ? initializeApp(config, 'studentAuthApp')
+  : null
+
+export const studentAuth = studentApp ? getAuth(studentApp) : null
