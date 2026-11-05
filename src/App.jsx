@@ -12,34 +12,84 @@ const empty = (v='') => v ?? ''
 function Button({children, onClick, kind='primary', disabled=false, type='button'}) { return <button type={type} disabled={disabled} onClick={onClick} className={`btn ${kind}`}>{children}</button> }
 function Field({label, ...props}) { return <label className="field"><span>{label}</span><input {...props}/></label> }
 function Select({label, children, ...props}) { return <label className="field"><span>{label}</span><select {...props}>{children}</select></label> }
-function Notice({message, error}) { return message ? <div className={error?'notice error':'notice'}>{message}</div> : null }
+function Notice({message, error}) { return message ? <div className={error?'notice error':'notice'} role="alert">{message}</div> : null }
 
 export default function App() {
   const [user,setUser]=useState(null), [role,setRole]=useState(''), [profile,setProfile]=useState(null)
+  const [authLoading,setAuthLoading]=useState(true)
   const [page,setPage]=useState('dashboard'), [menu,setMenu]=useState(false), [dark,setDark]=useState(localStorage.getItem('scc-dark')==='1')
   const [lang,setLang]=useState(localStorage.getItem('scc-lang')||'hi'), [busy,setBusy]=useState(false), [message,setMessage]=useState(''), [error,setError]=useState(false)
   const [email,setEmail]=useState(''), [password,setPassword]=useState(''), [roll,setRoll]=useState('')
   const [students,setStudents]=useState([]), [tests,setTests]=useState([]), [results,setResults]=useState([]), [notices,setNotices]=useState([]), [attendance,setAttendance]=useState([])
   const [search,setSearch]=useState(''), [form,setForm]=useState({})
   const t=(hi,en)=>lang==='hi'?hi:en
-  const say=(m,e=false)=>{setMessage(m);setError(e);setTimeout(()=>setMessage(''),4500)}
+  const say=(m,e=false)=>{setMessage(m);setError(e);setTimeout(()=>setMessage(''),6000)}
+
   useEffect(()=>{document.documentElement.dataset.theme=dark?'dark':'light';localStorage.setItem('scc-dark',dark?'1':'0')},[dark])
   useEffect(()=>{localStorage.setItem('scc-lang',lang)},[lang])
+
+  // Wait for Firebase Auth and the matching Firestore profile before showing the app.
   useEffect(()=>{
-    if(!auth) return
-    return onAuthStateChanged(auth, async u=>{
-      setUser(u); setRole(''); setProfile(null)
-      if(!u) return
-      try {
+    if(!auth || !db){
+      setAuthLoading(false)
+      return
+    }
+    let active=true
+    const unsubscribe=onAuthStateChanged(auth, async (u)=>{
+      if(!active) return
+      setAuthLoading(true)
+
+      if(!u){
+        setUser(null)
+        setRole('')
+        setProfile(null)
+        setAuthLoading(false)
+        return
+      }
+
+      try{
         const snap=await getDoc(doc(db,'users',u.uid))
-        if(!snap.exists()) { await signOut(auth); say('इस अकाउंट की भूमिका सेट नहीं है। Admin से संपर्क करें।',true); return }
+        if(!active) return
+
+        if(!snap.exists()){
+          setUser(null);setRole('');setProfile(null)
+          await signOut(auth)
+          say('इस अकाउंट की प्रोफाइल नहीं मिली। Admin से संपर्क करें।',true)
+          return
+        }
+
         const data=snap.data()
-        if(data.isActive===false){await signOut(auth);say('यह अकाउंट निष्क्रिय है।',true);return}
-        setRole(data.role); setProfile(data)
-      } catch(e){say('यूज़र प्रोफाइल पढ़ने में समस्या: '+e.message,true)}
+        if(data.isActive!==true){
+          setUser(null);setRole('');setProfile(null)
+          await signOut(auth)
+          say('यह अकाउंट सक्रिय नहीं है। Admin से संपर्क करें।',true)
+          return
+        }
+
+        if(!['admin','student'].includes(data.role)){
+          setUser(null);setRole('');setProfile(null)
+          await signOut(auth)
+          say('इस अकाउंट की भूमिका सही नहीं है। Admin से संपर्क करें।',true)
+          return
+        }
+
+        setUser(u)
+        setRole(data.role)
+        setProfile(data)
+      }catch(e){
+        if(!active) return
+        setUser(null);setRole('');setProfile(null)
+        await signOut(auth).catch(()=>{})
+        say('प्रोफाइल जाँचने में समस्या: '+(e.code||e.message),true)
+      }finally{
+        if(active) setAuthLoading(false)
+      }
     })
+    return ()=>{active=false;unsubscribe()}
   },[])
+
   useEffect(()=>{ if(user && role) loadData() },[user,role])
+
   async function loadData(){
     try {
       if(role==='admin'){
@@ -60,17 +110,31 @@ export default function App() {
           setResults(rs.docs.map(d=>({id:d.id,...d.data()})));setAttendance(at.docs.map(d=>({id:d.id,...d.data()})));setNotices(ns.docs.map(d=>({id:d.id,...d.data()})));setTests(ts.docs.map(d=>({id:d.id,...d.data()})))
         }
       }
-    } catch(e){say('डेटा लोड नहीं हुआ: '+e.message,true)}
+    } catch(e){say('डेटा लोड नहीं हुआ: '+(e.code||e.message),true)}
   }
+
   async function login(e){
-    e.preventDefault();setBusy(true)
-    try {
-      const em=role==='student'?studentAuthEmail(roll):email.trim()
+    e.preventDefault()
+    if(!auth){say('Firebase कनेक्शन उपलब्ध नहीं है।',true);return}
+    setBusy(true)
+    setMessage('')
+    try{
+      const em=role==='student'?studentAuthEmail(roll.trim()):email.trim()
       await signInWithEmailAndPassword(auth,em,password)
       say('लॉगिन सफल।')
-    } catch(e){say('लॉगिन नहीं हुआ। Roll Number/Email और Password जाँचें।',true)}
-    finally{setBusy(false)}
+    }catch(e){
+      const errors={
+        'auth/invalid-credential':'ईमेल या पासवर्ड गलत है।',
+        'auth/user-not-found':'यह ईमेल रजिस्टर नहीं है।',
+        'auth/wrong-password':'पासवर्ड गलत है।',
+        'auth/invalid-email':'ईमेल का फॉर्मेट गलत है।',
+        'auth/too-many-requests':'बहुत अधिक प्रयास हुए हैं। थोड़ी देर बाद कोशिश करें।',
+        'auth/network-request-failed':'इंटरनेट कनेक्शन जाँचें और दोबारा कोशिश करें।'
+      }
+      say(errors[e.code]||('लॉगिन नहीं हुआ: '+(e.code||e.message)),true)
+    }finally{setBusy(false)}
   }
+
   async function logout(){await signOut(auth);setPage('dashboard');setPassword('')}
   async function addStudent(e){
     e.preventDefault();setBusy(true)
@@ -147,13 +211,19 @@ export default function App() {
     const msg=`नमस्ते ${r.studentNameSnapshot}! आपका टेस्ट रिजल्ट जारी है। अंक: ${r.obtainedMarks}/${r.totalMarks}, प्रतिशत: ${r.percentage}%, रैंक: ${r.rank??'-'}, परिणाम: ${r.resultStatus}। अपना पूरा रिजल्ट देखने के लिए Shiv Coaching Center Student Portal पर लॉगिन करें।`
     window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`,'_blank')
   }
+
   const myStudent=students[0]
   const avg=results.length?Math.round(results.reduce((a,r)=>a+Number(r.percentage||0),0)/results.length):0
   const nav=role==='admin'?[
     ['dashboard','Dashboard',LayoutDashboard],['students','Students',Users],['tests','Tests',ClipboardList],['marks','Marks Entry',BookOpen],['results','Results',Trophy],['attendance','Attendance',CalendarCheck],['notices','Notices',Bell],['backup','Backup',Download]
   ]:[['dashboard','Dashboard',LayoutDashboard],['myresults','My Results',Trophy],['performance','Performance',ChartNoAxesCombined],['attendance','My Attendance',CalendarCheck],['notices','Notice Board',Bell]]
+
   if(!firebaseConfigured)return <div className="setup"><div className="brandmark"><GraduationCap size={34}/></div><h1>{BRAND}</h1><h2>Firebase Setup Required</h2><p>यह प्रोजेक्ट तैयार है, लेकिन Firebase की जानकारी अभी जोड़ी नहीं गई है।</p><p><b>अगला कदम:</b> Firebase Console में Web App बनाएँ और README में दिए गए निर्देशों के अनुसार .env फ़ाइल में Firebase Config भरें।</p><div className="setupbox">VITE_FIREBASE_API_KEY<br/>VITE_FIREBASE_AUTH_DOMAIN<br/>VITE_FIREBASE_PROJECT_ID<br/>VITE_FIREBASE_APP_ID</div><small>बिना Firebase Configuration के Login और Database काम नहीं करेंगे।</small></div>
-  if(!user)return <div className="loginpage"><div className="loginhero"><div className="brandmark"><GraduationCap size={36}/></div><h1>{BRAND}</h1><p>ज्ञान • अनुशासन • सफलता</p></div><div className="loginbox"><h2>{t('पोर्टल में लॉगिन करें','Portal Login')}</h2><div className="tabs"><button className={role!=='student'?'active':''} onClick={()=>setRole('admin')}>Admin</button><button className={role==='student'?'active':''} onClick={()=>setRole('student')}>Student</button></div><form onSubmit={login}>{role==='student'?<Field label="Roll Number" value={roll} onChange={e=>setRoll(e.target.value)} required placeholder="जैसे 12001"/>:<Field label="Admin Email" type="email" value={email} onChange={e=>setEmail(e.target.value)} required placeholder="Admin Email"/>}<Field label="Password" type="password" value={password} onChange={e=>setPassword(e.target.value)} required placeholder="Password"/><Button type="submit" disabled={busy}>{busy?'Please wait...':'Login'}</Button></form><p className="hint">Student password भूलने पर Coaching Admin से संपर्क करें।</p></div></div>
+
+  if(authLoading)return <div className="setup"><div className="brandmark"><GraduationCap size={34}/></div><h2>लोड हो रहा है...</h2><p>Firebase अकाउंट की जाँच की जा रही है।</p></div>
+
+  if(!user)return <div className="loginpage"><div className="loginhero"><div className="brandmark"><GraduationCap size={36}/></div><h1>{BRAND}</h1><p>ज्ञान • अनुशासन • सफलता</p></div><div className="loginbox"><h2>{t('पोर्टल में लॉगिन करें','Portal Login')}</h2><Notice message={message} error={error}/><div className="tabs"><button type="button" className={role!=='student'?'active':''} onClick={()=>{setRole('admin');setMessage('')}}>Admin</button><button type="button" className={role==='student'?'active':''} onClick={()=>{setRole('student');setMessage('')}}>Student</button></div><form onSubmit={login}>{role==='student'?<Field label="Roll Number" value={roll} onChange={e=>setRoll(e.target.value)} required placeholder="जैसे 12001"/>:<Field label="Admin Email" type="email" value={email} onChange={e=>setEmail(e.target.value)} required placeholder="Admin Email"/>}<Field label="Password" type="password" value={password} onChange={e=>setPassword(e.target.value)} required placeholder="Password"/><Button type="submit" disabled={busy}>{busy?'Please wait...':'Login'}</Button></form><p className="hint">Student password भूलने पर Coaching Admin से संपर्क करें।</p></div></div>
+
   return <div className="app"><aside className={menu?'sidebar open':'sidebar'}><div className="sidebrand"><div className="brandmark"><GraduationCap/></div><div><b>SHIV COACHING</b><small>CENTER PORTAL</small></div></div><div className="navlabel">{role==='admin'?'ADMIN MENU':'STUDENT MENU'}</div>{nav.map(([id,label,Icon])=><button key={id} className={`navitem ${page===id?'selected':''}`} onClick={()=>{setPage(id);setMenu(false)}}><Icon size={18}/>{label}</button>)}<div className="sidebottom"><button className="navitem" onClick={()=>setDark(!dark)}>{dark?<Sun size={18}/>:<Moon size={18}/>} {dark?'Light Mode':'Dark Mode'}</button><button className="navitem" onClick={()=>setLang(lang==='hi'?'en':'hi')}>文 {lang==='hi'?'English':'हिन्दी'}</button><button className="navitem" onClick={logout}><LogOut size={18}/> Logout</button></div></aside><main className="main"><header className="topbar"><button className="iconbtn mobileonly" onClick={()=>setMenu(!menu)}><Menu/></button><div><b>{BRAND}</b><small>{role==='admin'?'Administrator':'Student Portal'}</small></div><button className="iconbtn" onClick={()=>setDark(!dark)}>{dark?<Sun/>:<Moon/>}</button></header><div className="content"><Notice message={message} error={error}/>{page==='dashboard'&&<><div className="welcome"><div><span className="eyebrow">WELCOME BACK</span><h1>{role==='admin'?'Admin Dashboard':`नमस्ते, ${myStudent?.fullName||'Student'}!`}</h1><p>आपके कोचिंग सेंटर का पूरा अकादमिक रिकॉर्ड एक जगह।</p></div><div className="datepill">{dateKey()}</div></div><div className="stats">{(role==='admin'?[['Total Students',students.length],['Total Tests',tests.length],['Published Results',results.filter(r=>r.publicationStatus==='Published').length],['Average',`${avg}%`]]:[['My Tests',results.length],['Average',`${avg}%`],['Attendance',`${attendance.length?Math.round(attendance.filter(a=>a.status==='Present').length/attendance.length*100):0}%`],['Notices',notices.length]]).map(([a,b])=><div className="stat" key={a}><small>{a}</small><strong>{b}</strong></div>)}</div><div className="panel"><h3>{role==='admin'?'Quick Actions':'Recent Results'}</h3>{role==='admin'?<div className="quick">{[['students','Add Student'],['tests','Create Test'],['marks','Enter Marks'],['attendance','Mark Attendance'],['notices','Add Notice']].map(([p,l])=><Button key={p} kind="soft" onClick={()=>setPage(p)}><Plus size={16}/>{l}</Button>)}</div>:<ResultList rows={results} tests={tests} pdf={pdf} share={share}/>}</div><div className="panel"><h3>Latest Notices</h3><NoticeList rows={notices}/></div></>}
   {page==='students'&&role==='admin'&&<><PageTitle title="Student Management" sub="विद्यार्थियों का रिकॉर्ड जोड़ें और मैनेज करें"/><div className="panel"><h3>Add Student</h3><form className="formgrid" onSubmit={addStudent}><Field label="Full Name" value={empty(form.fullName)} onChange={e=>setForm({...form,fullName:e.target.value})} required/><Field label="Roll Number" value={empty(form.rollNumber)} onChange={e=>setForm({...form,rollNumber:e.target.value})} required/><Select label="Class" value={form.className||'12th'} onChange={e=>setForm({...form,className:e.target.value})}><option>12th</option><option>11th</option><option>10th</option></Select><Select label="Stream" value={form.stream||'Science'} onChange={e=>setForm({...form,stream:e.target.value})}><option>Science</option><option>Arts</option><option>Commerce</option></Select><Field label="Mobile Number" value={empty(form.mobileNumber)} onChange={e=>setForm({...form,mobileNumber:e.target.value})}/><Field label="Admission Date" type="date" value={form.admissionDate||dateKey()} onChange={e=>setForm({...form,admissionDate:e.target.value})}/><div className="full"><Button type="submit" disabled={busy}>Save Student Profile</Button></div></form></div><div className="panel"><div className="panelhead"><h3>Student List ({students.length})</h3><div className="search"><Search size={16}/><input placeholder="Search name / roll" value={search} onChange={e=>setSearch(e.target.value)}/></div></div><div className="tablewrap"><table><thead><tr><th>Name</th><th>Roll</th><th>Class</th><th>Account</th><th>Status</th></tr></thead><tbody>{students.filter(s=>(s.fullName+' '+s.rollNumber).toLowerCase().includes(search.toLowerCase())).map(s=><tr key={s.id}><td>{s.fullName}</td><td>{s.rollNumber}</td><td>{s.className}</td><td>{s.accountStatus||'Pending'}</td><td>{s.status}</td></tr>)}</tbody></table></div><p className="hint">नया Student Profile सेव होने के बाद Firebase Console में synthetic email से Authentication User बनाएँ, फिर उसका UID students दस्तावेज़ के authUid में जोड़ें और accountStatus को Active करें।</p></div></>}
   {page==='tests'&&role==='admin'&&<><PageTitle title="Test Management" sub="Weekly, Monthly और Subject-wise Tests"/><div className="panel"><h3>Create New Test</h3><form className="formgrid" onSubmit={addTest}><Field label="Test Name" value={empty(form.testName)} onChange={e=>setForm({...form,testName:e.target.value})} required/><Select label="Test Type" value={form.testType||'Weekly'} onChange={e=>setForm({...form,testType:e.target.value})}><option>Weekly</option><option>Monthly</option><option>Subject-wise</option></Select><Select label="Subject" value={form.subject||'Physics'} onChange={e=>setForm({...form,subject:e.target.value})}>{['Physics','Chemistry','Mathematics','Biology','English','Hindi'].map(x=><option key={x}>{x}</option>)}</Select><Field label="Test Date" type="date" value={form.testDate||dateKey()} onChange={e=>setForm({...form,testDate:e.target.value})}/><Field label="Total Marks" type="number" min="1" value={empty(form.totalMarks)} onChange={e=>setForm({...form,totalMarks:e.target.value})} required/><Field label="Passing Marks" type="number" min="0" value={empty(form.passingMarks)} onChange={e=>setForm({...form,passingMarks:e.target.value})} required/><div className="full"><Button type="submit" disabled={busy}>Create Test</Button></div></form></div><div className="panel"><h3>All Tests</h3><div className="tablewrap"><table><thead><tr><th>Test</th><th>Subject</th><th>Date</th><th>Marks</th><th>Status</th></tr></thead><tbody>{tests.map(x=><tr key={x.id}><td>{x.testName}</td><td>{x.subject}</td><td>{x.testDate}</td><td>{x.totalMarks}</td><td>{x.status}</td></tr>)}</tbody></table></div></div></>}
@@ -166,6 +236,7 @@ export default function App() {
   {page==='backup'&&role==='admin'&&<><PageTitle title="Backup & Restore" sub="अपने डेटा की सुरक्षित JSON कॉपी डाउनलोड करें"/><div className="panel"><p>यह Backup केवल ऐप में लोड किए गए डेटा का JSON Export करता है। इसे नियमित रूप से डाउनलोड करके सुरक्षित जगह रखें।</p><Button onClick={downloadBackup}><Download size={16}/> Download JSON Backup</Button><p className="hint">यह Authentication अकाउंट या Password का Backup नहीं है।</p></div></>}
   </div></main></div>
 }
+
 function PageTitle({title,sub}){return <div className="pagetitle"><h1>{title}</h1><p>{sub}</p></div>}
 function ResultList({rows,tests,pdf,share}){if(!rows.length)return <div className="empty">अभी कोई रिजल्ट उपलब्ध नहीं है।</div>;return <div className="tablewrap"><table><thead><tr><th>Test</th><th>Marks</th><th>%</th><th>Status</th><th>Rank</th><th>Actions</th></tr></thead><tbody>{rows.map(r=><tr key={r.id}><td>{tests.find(t=>t.id===r.testId)?.testName||'Test'}</td><td>{r.obtainedMarks}/{r.totalMarks}</td><td>{r.percentage}%</td><td><span className={`pill ${r.resultStatus==='PASS'?'good':r.resultStatus==='FAIL'?'bad':''}`}>{r.resultStatus}</span></td><td>{r.rank??'-'}</td><td><div className="actions"><button className="tiny" onClick={()=>pdf(r)} title="PDF"><Download size={15}/></button><button className="tiny" onClick={()=>share(r)} title="WhatsApp"><Share2 size={15}/></button></div></td></tr>)}</tbody></table></div>}
 function NoticeList({rows}){if(!rows.length)return <div className="empty">अभी कोई Notice नहीं है।</div>;return rows.map(n=><div className="noticeitem" key={n.id}><b>{n.title}</b><small>{n.category||'General'}</small><p>{n.description}</p></div>)}
