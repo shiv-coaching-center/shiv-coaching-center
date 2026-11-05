@@ -91,26 +91,50 @@ export default function App() {
   useEffect(()=>{ if(user && role) loadData() },[user,role])
 
   async function loadData(){
-    try {
+    const rowsOf=(snap)=>snap.docs.map(d=>({id:d.id,...d.data()}))
+    // हर collection अलग से लोड होती है। किसी एक में permission-denied आए तो बाकी का डेटा नहीं रुकता,
+    // और संदेश में साफ़ दिखता है कि कौन सी collection की समस्या है।
+    // एक से ज़्यादा query दी गई हों तो पहली fail होने पर अगली आज़माई जाती है।
+    const load=async(label,setter,...makers)=>{
+      let lastError=null
+      for(const make of makers){
+        try{
+          setter(rowsOf(await getDocs(make())))
+          return null
+        }catch(e){lastError=e}
+      }
+      return {label,code:(lastError&&(lastError.code||lastError.message))||'unknown'}
+    }
+    const problems=[]
+    try{
       if(role==='admin'){
-        const [s,ts,rs,ns,at]=await Promise.all([
-          getDocs(collection(db,'students')),getDocs(collection(db,'tests')),getDocs(collection(db,'results')),getDocs(collection(db,'notices')),getDocs(collection(db,'attendance'))
+        const out=await Promise.all([
+          load('students',setStudents,()=>collection(db,'students')),
+          load('tests',setTests,()=>collection(db,'tests')),
+          load('results',setResults,()=>collection(db,'results')),
+          load('notices',setNotices,()=>collection(db,'notices')),
+          load('attendance',setAttendance,()=>collection(db,'attendance'))
         ])
-        setStudents(s.docs.map(d=>({id:d.id,...d.data()})));setTests(ts.docs.map(d=>({id:d.id,...d.data()})));setResults(rs.docs.map(d=>({id:d.id,...d.data()})));setNotices(ns.docs.map(d=>({id:d.id,...d.data()})));setAttendance(at.docs.map(d=>({id:d.id,...d.data()})))
+        problems.push(...out.filter(Boolean))
       } else {
-        const st=await getDocs(query(collection(db,'students'),where('authUid','==',user.uid)))
-        const mine=st.docs.map(d=>({id:d.id,...d.data()}));setStudents(mine)
+        let mine=[]
+        const sp=await load('students',(rows)=>{mine=rows;setStudents(rows)},()=>query(collection(db,'students'),where('authUid','==',user.uid)))
+        if(sp) problems.push(sp)
         if(mine[0]){
-          const [rs,at,ns,ts]=await Promise.all([
-            getDocs(query(collection(db,'results'),where('studentId','==',mine[0].id),where('publicationStatus','==','Published'))),
-            getDocs(query(collection(db,'attendance'),where('studentId','==',mine[0].id))),
-            getDocs(query(collection(db,'notices'),where('status','==','Published'))),
-            getDocs(query(collection(db,'tests'),where('status','==','Published')))
+          const sid=mine[0].id
+          const out=await Promise.all([
+            load('results',setResults,()=>query(collection(db,'results'),where('studentId','==',sid),where('publicationStatus','==','Published'))),
+            load('attendance',setAttendance,()=>query(collection(db,'attendance'),where('studentId','==',sid))),
+            load('notices',setNotices,
+              ()=>query(collection(db,'notices'),where('status','==','Published')),
+              ()=>query(collection(db,'notices'),where('status','==','Published'),where('visibility','==','Students'))),
+            load('tests',setTests,()=>query(collection(db,'tests'),where('status','==','Published')))
           ])
-          setResults(rs.docs.map(d=>({id:d.id,...d.data()})));setAttendance(at.docs.map(d=>({id:d.id,...d.data()})));setNotices(ns.docs.map(d=>({id:d.id,...d.data()})));setTests(ts.docs.map(d=>({id:d.id,...d.data()})))
+          problems.push(...out.filter(Boolean))
         }
       }
-    } catch(e){say('डेटा लोड नहीं हुआ: '+(e.code||e.message),true)}
+    } catch(e){problems.push({label:'डेटा',code:e.code||e.message})}
+    if(problems.length) say('डेटा लोड नहीं हुआ: '+problems.map(p=>`${p.label} (${p.code})`).join(', '),true)
   }
 
   async function login(e){
