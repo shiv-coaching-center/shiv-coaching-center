@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://shiv-coaching-center.github.io/shiv-coaching-center/sitemap.xml
