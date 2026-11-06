@@ -109,6 +109,8 @@ export default function App() {
         ])
         setStudents(s.docs.map(d=>({...d.data(),id:d.id})));setTests(ts.docs.map(d=>({...d.data(),id:d.id})));setResults(rs.docs.map(d=>({...d.data(),id:d.id})));setNotices(ns.docs.map(d=>({...d.data(),id:d.id})));setAttendance(at.docs.map(d=>({...d.data(),id:d.id})));setCredentials(cs.docs.map(d=>({...d.data(),id:d.id})));setBranding(bs.exists()?bs.data():null)
       } else {
+        const bs=await getDoc(doc(db,'settings','branding'))
+        setBranding(bs.exists()?bs.data():null)
         const st=await getDocs(query(collection(db,'students'),where('authUid','==',user.uid)))
         const mine=st.docs.map(d=>({...d.data(),id:d.id}));setStudents(mine)
         if(mine[0]){
