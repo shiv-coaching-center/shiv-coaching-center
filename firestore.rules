@@ -39,6 +39,9 @@ service cloud.firestore {
       allow read: if true;
       allow create, update, delete: if isAdmin();
     }
+    match /studentCredentials/{studentId} {
+      allow read, create, update, delete: if isAdmin();
+    }
     match /activityLogs/{logId} {
       allow read: if isAdmin();
       allow create: if isAdmin();
