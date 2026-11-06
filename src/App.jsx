@@ -361,9 +361,36 @@ export default function App() {
   {page==='attendance'&&<><PageTitle title="Attendance" sub="दैनिक उपस्थिति रिकॉर्ड"/>{role==='admin'?<div className="panel"><form onSubmit={markAttendance}><Field label="Date" type="date" value={form.attDate||dateKey()} onChange={e=>setForm({...form,attDate:e.target.value})}/>{students.filter(s=>s.status==='Active').map(s=><div className="attrow" key={s.id}><span>{s.fullName} ({s.rollNumber})</span><select value={form[`att_${s.id}`]||'Present'} onChange={e=>setForm({...form,[`att_${s.id}`]:e.target.value})}><option>Present</option><option>Absent</option></select></div>)}<Button type="submit">Save Attendance</Button></form></div>:<div className="panel"><p>Total Classes: {attendance.length}</p><p>Present: {attendance.filter(a=>a.status==='Present').length}</p><p>Absent: {attendance.filter(a=>a.status==='Absent').length}</p><p>Attendance: {attendance.length?Math.round(attendance.filter(a=>a.status==='Present').length/attendance.length*100):0}%</p></div>}</>}
   {page==='notices'&&<><PageTitle title="Notice Board" sub="कोचिंग की नई सूचनाएँ"/>{role==='admin'&&<div className="panel"><h3>Add Notice</h3><form className="formgrid" onSubmit={addNotice}><Field label="Title (optional)" value={empty(form.title)} onChange={e=>setForm({...form,title:e.target.value})}/><Select label="Category" value={form.category||'General'} onChange={e=>setForm({...form,category:e.target.value})}><option>General</option><option>Holiday</option><option>Exam</option><option>Fee</option><option>Urgent</option></Select><label className="field full"><span>Message (optional)</span><textarea value={empty(form.description)} onChange={e=>setForm({...form,description:e.target.value})}/></label><label className="field full"><span>Notice Image / Banner</span><input type="file" accept="image/*" onChange={async e=>{try{const v=await imageToDataUrl(e.target.files?.[0]);setForm(x=>({...x,noticeImage:v}))}catch(err){say(err.message,true)}}}/></label>{form.noticeImage&&<img className="notice-preview" src={form.noticeImage} alt="Notice preview"/>}<Button type="submit">Publish Notice</Button></form></div>}<div className="panel"><NoticeList rows={notices} isAdmin={role==='admin'} onDelete={setNoticeToDelete} onImageClick={setNoticeImageOpen}/></div></>}
   {page==='backup'&&role==='admin'&&<><PageTitle title="Backup & Restore" sub="अपने डेटा की सुरक्षित JSON कॉपी डाउनलोड करें"/><div className="panel"><p>यह Backup केवल ऐप में लोड किए गए डेटा का JSON Export करता है। इसे नियमित रूप से डाउनलोड करके सुरक्षित जगह रखें।</p><Button onClick={downloadBackup}><Download size={16}/> Download JSON Backup</Button><p className="hint">यह Authentication अकाउंट या Password का Backup नहीं है।</p></div></>}
-  </div></main></div>
+  </div></main>
+    {noticeToDelete&&<div className="dialog-backdrop"><div className="confirm-dialog" role="dialog" aria-modal="true"><h3>Notice हटाएँ?</h3><p>क्या आप सच में यह notice हटाना चाहते हैं?</p><div className="dialog-actions"><Button kind="soft" disabled={busy} onClick={()=>setNoticeToDelete(null)}>रद्द करो</Button><Button kind="danger" disabled={busy} onClick={()=>deleteNotice(noticeToDelete)}>{busy?'हटाया जा रहा है...':'हाँ, हटाओ'}</Button></div></div></div>}
+    {noticeImageOpen&&<div className="image-lightbox" onClick={()=>setNoticeImageOpen('')}><button className="lightbox-close" aria-label="Close image" onClick={()=>setNoticeImageOpen('')}>×</button><img src={noticeImageOpen} alt="Notice enlarged" onClick={e=>e.stopPropagation()}/></div>}
+  </div>
 }
 
 function PageTitle({title,sub}){return <div className="pagetitle"><h1>{title}</h1><p>{sub}</p></div>}
 function ResultList({rows,tests,pdf,share}){if(!rows.length)return <div className="empty">अभी कोई रिजल्ट उपलब्ध नहीं है।</div>;return <div className="tablewrap"><table><thead><tr><th>Test</th><th>Marks</th><th>%</th><th>Status</th><th>Rank</th><th>Actions</th></tr></thead><tbody>{rows.map(r=><tr key={r.id}><td>{tests.find(t=>t.id===r.testId)?.testName||'Test'}</td><td>{r.obtainedMarks}/{r.totalMarks}</td><td>{r.percentage}%</td><td><span className={`pill ${r.resultStatus==='PASS'?'good':r.resultStatus==='FAIL'?'bad':''}`}>{r.resultStatus}</span></td><td>{r.rank??'-'}</td><td><div className="actions"><button className="tiny" onClick={()=>pdf(r)} title="PDF"><Download size={15}/></button><button className="tiny" onClick={()=>share(r)} title="WhatsApp"><Share2 size={15}/></button></div></td></tr>)}</tbody></table></div>}
-function NoticeList({rows}){if(!rows.length)return <div className="empty">अभी कोई Notice नहीं है।</div>;return rows.map(n=><div className="noticeitem" key={n.id}>{n.title&&<b>{n.title}</b>}<small>{n.category||'General'}</small>{n.imageData&&<img className="notice-image" src={n.imageData} alt={n.title||'Notice image'}/>}{n.description&&<p>{n.description}</p>}</div>)}
+function NoticeList({rows,isAdmin=false,onDelete=()=>{},onImageClick=()=>{}}){
+  const [expanded,setExpanded]=useState({})
+  const sorted=[...rows].sort((a,b)=>{
+    const stamp=v=>v?.toDate?v.toDate().getTime():v?.seconds?v.seconds*1000:(v?new Date(v).getTime():0)
+    return stamp(b.createdAt)-stamp(a.createdAt)
+  })
+  if(!sorted.length)return <div className="notice-empty"><span>📭</span><strong>अभी कोई सूचना नहीं है</strong><small>नई सूचनाएँ यहाँ दिखाई देंगी।</small></div>
+  const categories={Holiday:{emoji:'🎉',label:'Holiday',tone:'holiday'},General:{emoji:'📢',label:'General',tone:'general'},Exam:{emoji:'📝',label:'Exam',tone:'exam'},Test:{emoji:'📝',label:'Exam',tone:'exam'},Fee:{emoji:'💰',label:'Fee',tone:'fee'},Urgent:{emoji:'🚨',label:'Urgent',tone:'urgent'},Result:{emoji:'🏆',label:'Result',tone:'result'}}
+  const getDate=raw=>raw?.toDate?raw.toDate():raw?.seconds?new Date(raw.seconds*1000):(raw?new Date(raw):null)
+  const relative=raw=>{const d=getDate(raw);if(!d||Number.isNaN(d.getTime()))return 'तारीख उपलब्ध नहीं';const days=Math.floor((new Date().setHours(0,0,0,0)-new Date(d).setHours(0,0,0,0))/86400000);if(days<=0)return 'आज';if(days===1)return 'कल';return days+' दिन पहले'}
+  return <div className="notice-card-list">{sorted.map(n=>{
+    const cat=categories[n.category]||categories.General
+    const created=getDate(n.createdAt)
+    const isNew=created&&!Number.isNaN(created.getTime())&&(Date.now()-created.getTime()<86400000)
+    const message=n.description||'',long=message.length>220,open=!!expanded[n.id]
+    return <article className={'notice-card tone-'+cat.tone} key={n.id}>
+      <div className="notice-card-top"><span className="notice-category">{cat.emoji} {cat.label}</span>{isNew&&<span className="notice-new">NEW</span>}</div>
+      {n.title&&<h3>{n.title}</h3>}
+      {n.imageData&&<button type="button" className="notice-image-button" onClick={()=>onImageClick(n.imageData)} aria-label="इमेज बड़ी करके देखें"><img className="notice-card-image" src={n.imageData} alt={n.title||'Notice image'}/></button>}
+      {message&&<div className={'notice-message '+(long&&!open?'notice-message-clamp':'')}>{message}</div>}
+      {long&&<button type="button" className="read-more" onClick={()=>setExpanded(v=>({...v,[n.id]:!v[n.id]}))}>{open?'कम पढ़ें':'और पढ़ें'}</button>}
+      <div className="notice-card-footer"><span>🗓️ {relative(n.createdAt)}{created&&!Number.isNaN(created.getTime())?' · '+created.toLocaleDateString('hi-IN',{day:'numeric',month:'short',year:'numeric'}):''}</span>{isAdmin&&<button type="button" className="notice-delete" onClick={()=>onDelete(n)}>🗑️ Delete</button>}</div>
+    </article>
+  })}</div>
+}
