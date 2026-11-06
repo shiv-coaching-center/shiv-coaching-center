@@ -54,3 +54,7 @@ html[data-theme=dark] .notice-card{box-shadow:0 8px 22px #0002}
  .notice-card-footer{align-items:flex-start;font-size:11px}
  .banner-actions .btn{flex:1}
 }
+
+
+/* Class management and class-scoped lists */
+.class-chip-list{display:flex;flex-wrap:wrap;gap:9px;margin:10px 0 16px}.class-chip{display:inline-flex;align-items:center;gap:9px;padding:7px 10px 7px 13px;border-radius:999px;background:var(--soft);color:var(--text);font-weight:750;font-size:13px}.class-chip button{border:0;border-radius:50%;width:22px;height:22px;background:var(--card);color:var(--muted);font-size:17px;line-height:1}.class-add-row{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap}.class-add-row .field{flex:1;min-width:180px;margin:0}.class-add-row .btn{margin-bottom:13px}@media(max-width:800px){.class-add-row{display:grid;grid-template-columns:1fr}.class-add-row .btn{width:100%;margin:0}.class-manager{padding:15px}}
