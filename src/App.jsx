@@ -32,7 +32,7 @@ export default function App() {
   const [lang,setLang]=useState(localStorage.getItem('scc-lang')||'hi'), [busy,setBusy]=useState(false), [message,setMessage]=useState(''), [error,setError]=useState(false)
   const [email,setEmail]=useState(''), [password,setPassword]=useState(''), [roll,setRoll]=useState('')
   const [students,setStudents]=useState([]), [tests,setTests]=useState([]), [results,setResults]=useState([]), [notices,setNotices]=useState([]), [attendance,setAttendance]=useState([]), [credentials,setCredentials]=useState([]), [branding,setBranding]=useState(null)
-  const [search,setSearch]=useState(''), [form,setForm]=useState({}), [newStudentCredentials,setNewStudentCredentials]=useState(null)
+  const [search,setSearch]=useState(''), [form,setForm]=useState({}), [newStudentCredentials,setNewStudentCredentials]=useState(null), [noticeToDelete,setNoticeToDelete]=useState(null), [noticeImageOpen,setNoticeImageOpen]=useState('')
   const t=(hi,en)=>lang==='hi'?hi:en
   const say=(m,e=false)=>{setMessage(m);setError(e);setTimeout(()=>setMessage(''),6000)}
 
@@ -247,8 +247,24 @@ export default function App() {
   }
   async function saveBranding(e){
     e.preventDefault();setBusy(true)
-    try{await setDoc(doc(db,'settings','branding'),{title:form.brandTitle||BRAND,subtitle:form.brandSubtitle||'ज्ञान • अनुशासन • सफलता',imageData:form.brandImage||branding?.imageData||'',updatedAt:serverTimestamp()},{merge:true});await loadData();say('डैशबोर्ड ब्रांडिंग सेव हो गई।')}
-    catch(e){say('ब्रांडिंग सेव नहीं हुई: '+(e.code||e.message),true)}finally{setBusy(false)}
+    try{
+      const next={title:String(form.brandTitle??branding?.title??'').trim(),subtitle:String(form.brandSubtitle??branding?.subtitle??'').trim(),imageData:form.brandImage||branding?.imageData||'',updatedAt:serverTimestamp()}
+      await setDoc(doc(db,'settings','branding'),next,{merge:true})
+      setBranding({...next,updatedAt:new Date()});setForm(v=>({...v,brandImage:''}));say('Banner बदल गया ✅')
+    }catch(e){say('Banner सेव नहीं हुआ: '+(e.code||e.message),true)}finally{setBusy(false)}
+  }
+  async function removeBanner(){
+    if(!window.confirm('क्या आप Banner हटाकर Default Gradient लगाना चाहते हैं?'))return
+    setBusy(true)
+    try{const next={title:String(form.brandTitle??branding?.title??'').trim(),subtitle:String(form.brandSubtitle??branding?.subtitle??'').trim(),imageData:'',updatedAt:serverTimestamp()};await setDoc(doc(db,'settings','branding'),next,{merge:true});setBranding({...next});setForm(v=>({...v,brandImage:''}));say('Banner हटा दिया गया। Default Gradient सक्रिय है।')}
+    catch(e){say('Banner नहीं हटाया जा सका: '+(e.code||e.message),true)}finally{setBusy(false)}
+  }
+  async function deleteNotice(notice){
+    if(!notice?.id)return
+    setBusy(true)
+    try{await deleteDoc(doc(db,'notices',notice.id));setNotices(v=>v.filter(x=>x.id!==notice.id));setNoticeToDelete(null);say('Notice हटा दिया गया。')}
+    catch(e){say(e.code==='permission-denied'?'Firestore Rules ने Delete रोक दिया। notices में allow create, update, delete: if isAdmin(); जाँचें।':'Notice हटाया नहीं जा सका: '+(e.code||e.message),true)}
+    finally{setBusy(false)}
   }
   async function addTest(e){
     e.preventDefault();setBusy(true)
