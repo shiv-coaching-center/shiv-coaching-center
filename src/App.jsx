@@ -9,6 +9,12 @@ import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianG
 
 const BRAND = 'SHIV COACHING CENTER'
 const empty = (v='') => v ?? ''
+function normalizeClass(value){
+  const clean=String(value||'').trim().toLowerCase().replace(/\\s+/g,' ')
+  if(['10th','10','high school','highschool','high-school','हाई स्कूल'].includes(clean)) return '10th'
+  if(['12th','12','intermediate','inter','इंटर','इंटरमीडिएट'].includes(clean)) return '12th'
+  return clean
+}
 function makeStudentPassword(){
   const bytes=crypto.getRandomValues(new Uint8Array(6))
   return Array.from(bytes, b => String(b % 10)).join('')
@@ -99,7 +105,8 @@ export default function App() {
     return ()=>{active=false;unsubscribe()}
   },[])
 
-  useEffect(()=>{ if(user && role) loadData() },[user,role])
+  // Refresh portal data whenever a section is opened so attendance and newly published tests stay current.
+  useEffect(()=>{ if(user && role) loadData() },[user,role,page])
 
   async function loadData(){
     try {
@@ -120,9 +127,17 @@ export default function App() {
             getDocs(query(collection(db,'results'),where('studentId','==',mine[0].id),where('publicationStatus','==','Published'))),
             getDocs(query(collection(db,'attendance'),where('studentId','==',mine[0].id))),
             getDocs(query(collection(db,'notices'),where('status','==','Published'),where('visibility','==','Students'))),
+            // Fetch all published tests, including tests uploaded before this student account existed.
             getDocs(query(collection(db,'tests'),where('status','==','Published')))
           ])
-          setResults(rs.docs.map(d=>({...d.data(),id:d.id})));setAttendance(at.docs.map(d=>({...d.data(),id:d.id})));setNotices(ns.docs.map(d=>({...d.data(),id:d.id})));setTests(ts.docs.map(d=>({...d.data(),id:d.id})))
+          const ownClass=normalizeClass(mine[0].className||'12th')
+          const publishedTests=ts.docs.map(d=>({...d.data(),id:d.id})).filter(test=>normalizeClass(test.className||'12th')===ownClass).sort((a,b)=>String(b.testDate||'').localeCompare(String(a.testDate||'')))
+          setResults(rs.docs.map(d=>({...d.data(),id:d.id})))
+          setAttendance(at.docs.map(d=>({...d.data(),id:d.id})).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))))
+          setNotices(ns.docs.map(d=>({...d.data(),id:d.id})))
+          setTests(publishedTests)
+        }else{
+          setResults([]);setAttendance([]);setNotices([]);setTests([])
         }
       }
     } catch(e){say('डेटा लोड नहीं हुआ: '+(e.code||e.message),true)}
@@ -339,7 +354,7 @@ export default function App() {
     e.preventDefault();setBusy(true)
     try{
       const test=tests.find(x=>x.id===form.testId);if(!test)throw new Error('टेस्ट चुनें।')
-      const batchRows=students.filter(s=>s.status==='Active'&&(s.className||'12th')===(test.className||'12th'))
+      const batchRows=students.filter(s=>s.status==='Active'&&normalizeClass(s.className||'12th')===normalizeClass(test.className||'12th'))
       for(const s of batchRows){
         const raw=form[`m_${s.id}`]
         const att=form[`a_${s.id}`]||'Present'
@@ -370,7 +385,7 @@ export default function App() {
     e.preventDefault();setBusy(true)
     try{
       const date=form.attDate||dateKey()
-      const classRows=students.filter(x=>x.status==='Active'&&(x.className||'12th')===selectedAttendanceClass)
+      const classRows=students.filter(x=>x.status==='Active'&&normalizeClass(x.className||'12th')===normalizeClass(selectedAttendanceClass))
       if(!classRows.length)throw new Error('इस क्लास में कोई Active विद्यार्थी नहीं है।')
       for(const s of classRows){
         const id=`${date}_${s.id}`
@@ -422,7 +437,7 @@ export default function App() {
   {page==='tests'&&role==='admin'&&<><PageTitle title="Test Management" sub="Weekly, Monthly और Subject-wise Tests"/><div className="panel"><h3>Create New Test</h3><form className="formgrid" onSubmit={addTest}><Field label="Test Name" value={empty(form.testName)} onChange={e=>setForm({...form,testName:e.target.value})} required/><Select label="Test Type" value={form.testType||'Weekly'} onChange={e=>setForm({...form,testType:e.target.value})}><option>Weekly</option><option>Monthly</option><option>Subject-wise</option></Select><Select label="Subject" value={form.subject||'Physics'} onChange={e=>setForm({...form,subject:e.target.value})}>{['Physics','Chemistry','Mathematics','Biology','English','Hindi'].map(x=><option key={x}>{x}</option>)}</Select><Select label="Class" value={form.className||'12th'} onChange={e=>setForm({...form,className:e.target.value})}>{classes.map(c=><option key={c}>{c}</option>)}</Select><Field label="Test Date" type="date" value={form.testDate||dateKey()} onChange={e=>setForm({...form,testDate:e.target.value})}/><Field label="Total Marks" type="number" min="1" value={empty(form.totalMarks)} onChange={e=>setForm({...form,totalMarks:e.target.value})} required/><Field label="Passing Marks" type="number" min="0" value={empty(form.passingMarks)} onChange={e=>setForm({...form,passingMarks:e.target.value})} required/><div className="full"><Button type="submit" disabled={busy}>Create Test</Button></div></form></div><div className="panel"><h3>All Tests</h3><div className="tablewrap"><table><thead><tr><th>Test</th><th>Class</th><th>Subject</th><th>Date</th><th>Marks</th><th>Status</th><th>Action</th></tr></thead><tbody>{tests.map(x=><tr key={x.id}><td>{x.testName}</td><td><span className="pill">{x.className||'12th'}</span></td><td>{x.subject}</td><td>{x.testDate}</td><td>{x.totalMarks}</td><td>{x.status}</td><td><Button kind="danger" disabled={busy} onClick={()=>deleteTest(x)}><Trash2 size={14}/> Delete Test</Button></td></tr>)}</tbody></table></div></div></>}
   {page==='marks'&&role==='admin'&&<><PageTitle title="Marks Entry" sub="एक टेस्ट चुनें और सभी विद्यार्थियों के नंबर भरें"/><div className="panel"><Select label="Select Test" value={form.testId||''} onChange={e=>setForm({...form,testId:e.target.value})}><option value="">Choose test</option>{tests.map(x=><option value={x.id} key={x.id}>{x.testName} · {x.subject}</option>)}</Select><form onSubmit={saveMarks}><div className="tablewrap"><table><thead><tr><th>Student</th><th>Marks</th><th>Attendance</th></tr></thead><tbody>{students.filter(s=>s.status==='Active'&&selectedTest&&(s.className||'12th')===(selectedTest.className||'12th')).map(s=><tr key={s.id}><td>{s.fullName}<small className="block">{s.rollNumber}</small></td><td><input className="markinput" type="number" min="0" value={form[`m_${s.id}`]??''} onChange={e=>setForm({...form,[`m_${s.id}`]:e.target.value})}/></td><td><select value={form[`a_${s.id}`]||'Present'} onChange={e=>setForm({...form,[`a_${s.id}`]:e.target.value})}><option>Present</option><option>Absent</option></select></td></tr>)}</tbody></table></div><Button type="submit" disabled={busy||!form.testId}>Save Marks as Draft</Button></form></div></>}
   {page==='results'&&role==='admin'&&<><PageTitle title="Result Management" sub="रिजल्ट जाँचें, प्रकाशित या Unpublish करें"/>{tests.map(test=><div className="panel" key={test.id}><div className="panelhead"><div><h3>{test.testName}</h3><small>{test.subject} · {test.testDate} · {test.totalMarks} Marks</small></div><div className="actions"><Button kind="soft" onClick={()=>publish(test.id,'Published')}>Publish</Button><Button kind="danger" onClick={()=>publish(test.id,'Draft')}>Unpublish</Button></div></div><ResultList rows={results.filter(r=>r.testId===test.id)} tests={tests} pdf={pdf} share={share}/></div>)}</>}
-  {page==='mytests'&&role==='student'&&<><PageTitle title="My Tests" sub="आपकी क्लास के प्रकाशित टेस्ट"/><div className="panel"><div className="tablewrap"><table><thead><tr><th>Test</th><th>Subject</th><th>Date</th><th>Total Marks</th><th>Status</th></tr></thead><tbody>{tests.filter(x=>String(x.className||'12th').trim().toLowerCase()===String(myStudent?.className||'12th').trim().toLowerCase()).map(x=><tr key={x.id}><td>{x.testName}<small className="block">{x.testType||'Test'}</small></td><td>{x.subject}</td><td>{x.testDate}</td><td>{x.totalMarks}</td><td><span className="pill good">Published</span></td></tr>)}</tbody></table></div>{tests.filter(x=>String(x.className||'12th').trim().toLowerCase()===String(myStudent?.className||'12th').trim().toLowerCase()).length===0&&<div className="empty">अभी आपकी क्लास के लिए कोई टेस्ट प्रकाशित नहीं हुआ है।</div>}</div></>}
+  {page==='mytests'&&role==='student'&&<><PageTitle title="My Tests" sub="आपकी क्लास के प्रकाशित टेस्ट"/><div className="panel"><div className="tablewrap"><table><thead><tr><th>Test</th><th>Subject</th><th>Date</th><th>Total Marks</th><th>Status</th></tr></thead><tbody>{tests.filter(x=>normalizeClass(x.className||'12th')===normalizeClass(myStudent?.className||'12th')).map(x=><tr key={x.id}><td>{x.testName}<small className="block">{x.testType||'Test'}</small></td><td>{x.subject}</td><td>{x.testDate}</td><td>{x.totalMarks}</td><td><span className="pill good">Published</span></td></tr>)}</tbody></table></div>{tests.filter(x=>String(x.className||'12th').trim().toLowerCase()===String(myStudent?.className||'12th').trim().toLowerCase()).length===0&&<div className="empty">अभी आपकी क्लास के लिए कोई टेस्ट प्रकाशित नहीं हुआ है।</div>}</div></>}
   {page==='myresults'&&role==='student'&&<><PageTitle title="My Results" sub="आपके प्रकाशित टेस्ट रिजल्ट"/><ResultList rows={results} tests={tests} pdf={pdf} share={share}/></>}
   {page==='performance'&&role==='student'&&<><PageTitle title="My Performance" sub="आपकी टेस्ट प्रगति"/><div className="panel chart"><ResponsiveContainer width="100%" height={260}><LineChart data={[...results].reverse().map(r=>({name:tests.find(x=>x.id===r.testId)?.testName||'Test',percentage:r.percentage}))}><CartesianGrid strokeDasharray="3 3"/><XAxis dataKey="name"/><YAxis domain={[0,100]}/><Tooltip/><Line type="monotone" dataKey="percentage" stroke="#2563eb" strokeWidth={3}/></LineChart></ResponsiveContainer></div></>}
   {page==='attendance'&&<><PageTitle title="Attendance" sub="दैनिक उपस्थिति रिकॉर्ड"/>{role==='admin'?<div className="panel"><form onSubmit={markAttendance}><Select label="क्लास चुनें" value={selectedAttendanceClass} onChange={e=>setSelectedAttendanceClass(e.target.value)}>{classes.map(c=><option key={c}>{c}</option>)}</Select><p className="hint">केवल {selectedAttendanceClass} के Active विद्यार्थी दिखेंगे।</p><Field label="Date" type="date" value={form.attDate||dateKey()} onChange={e=>setForm({...form,attDate:e.target.value})}/>{students.filter(s=>s.status==='Active'&&(s.className||'12th')===selectedAttendanceClass).map(s=><div className="attrow" key={s.id}><span>{s.fullName} ({s.rollNumber})</span><select value={form[`att_${s.id}`]||'Present'} onChange={e=>setForm({...form,[`att_${s.id}`]:e.target.value})}><option>Present</option><option>Absent</option></select></div>)}<Button type="submit">Save Attendance</Button></form></div>:<div className="panel"><p>Total Classes: {attendance.length}</p><p>Present: {attendance.filter(a=>a.status==='Present').length}</p><p>Absent: {attendance.filter(a=>a.status==='Absent').length}</p><p>Attendance: {attendance.length?Math.round(attendance.filter(a=>a.status==='Present').length/attendance.length*100):0}%</p></div>}</>}
