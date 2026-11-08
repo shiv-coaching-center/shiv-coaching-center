@@ -116,7 +116,7 @@ export default function App() {
         ])
         const legacyCompletedTests=ts.docs.filter(d=>d.data().status==='Completed')
         if(legacyCompletedTests.length) await Promise.all(legacyCompletedTests.map(d=>updateDoc(d.ref,{status:'Published'})))
-        setStudents(s.docs.map(d=>({...d.data(),id:d.id})));setTests(ts.docs.map(d=>({...d.data(),status:d.data().status==='Completed'?'Published':d.data().status,id:d.id})));setResults(rs.docs.map(d=>({...d.data(),id:d.id})));setNotices(ns.docs.map(d=>({...d.data(),id:d.id})));setAttendance(at.docs.map(d=>({...d.data(),id:d.id})));setCredentials(cs.docs.map(d=>({...d.data(),id:d.id})));setBranding(bs.exists()?bs.data():null);setClasses(Array.isArray(classSnap.data()?.items)&&classSnap.data().items.length?classSnap.data().items:['9th','10th','11th','12th'])
+        setStudents(s.docs.map(d=>({...d.data(),id:d.id})));setTests(ts.docs.map(d=>({...d.data(),status:d.data().status==='Completed'?'Published':d.data().status,id:d.id})));setResults(rs.docs.map(d=>({...d.data(),id:d.id})));setNotices(ns.docs.map(d=>({...d.data(),id:d.id})));setAttendance(at.docs.map(d=>({...d.data(),id:d.id})));setCredentials(cs.docs.map(d=>({...d.data(),id:d.id})));setBranding(bs.exists()?bs.data():null);const availableClasses=Array.isArray(classSnap.data()?.items)&&classSnap.data().items.length?classSnap.data().items:['9th','10th','11th','12th'];setClasses(availableClasses);setSelectedAttendanceClass(current=>availableClasses.includes(current)?current:availableClasses[0])
       } else {
         const bs=await getDoc(doc(db,'settings','branding'))
         setBranding(bs.exists()?bs.data():null)
