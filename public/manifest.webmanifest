@@ -1,0 +1,21 @@
+{
+  "id": "/shiv-coaching-center/",
+  "name": "SHIV COACHING CENTER BY SUMIT SIR",
+  "short_name": "Shiv Coaching",
+  "description": "Official coaching and student learning portal.",
+  "lang": "en-IN",
+  "start_url": "/shiv-coaching-center/",
+  "scope": "/shiv-coaching-center/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4f6fb",
+  "theme_color": "#102a56",
+  "icons": [
+    {
+      "src": "/shiv-coaching-center/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
