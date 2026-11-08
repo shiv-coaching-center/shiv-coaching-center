@@ -64,3 +64,19 @@ html[data-theme=dark] .notice-card{box-shadow:0 8px 22px #0002}
 .student-identity-bar{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:14px 24px 0;padding:14px 18px;border:1px solid var(--line);border-radius:14px;background:var(--card);box-shadow:0 5px 18px #0f172a0a;color:var(--text)}
 .student-identity-name{display:flex;align-items:center;gap:11px;min-width:0}.student-identity-avatar{display:grid;place-items:center;flex:0 0 40px;width:40px;height:40px;border-radius:12px;background:var(--soft);color:var(--primary,#2563eb)}.student-identity-name strong,.student-identity-details strong{display:block;font-size:14px;font-weight:850;overflow-wrap:anywhere}.student-identity-name small,.student-identity-details small{display:block;color:var(--muted);font-size:11px;margin-bottom:3px}.student-identity-details{display:flex;align-items:center;gap:24px}.student-identity-details>div+div{padding-left:22px;border-left:1px solid var(--line)}
 @media(max-width:800px){.student-identity-bar{margin:10px 13px 0;padding:12px;align-items:flex-start;flex-direction:column;gap:12px}.student-identity-details{width:100%;gap:0}.student-identity-details>div{flex:1}.student-identity-details>div+div{padding-left:14px}.student-identity-details strong{font-size:13px}}
+
+
+/* Premium notice presentation */
+.notice-card{padding:20px 20px 15px;border-radius:18px;border-left-width:5px;background:linear-gradient(155deg,var(--card) 0%,var(--soft) 100%);box-shadow:0 10px 30px #172b4d0c}
+.notice-card-top{margin-bottom:14px}
+.notice-category{padding:7px 12px;font-size:12px;letter-spacing:.2px}
+.notice-new{padding:6px 11px;font-size:10px;letter-spacing:1px;box-shadow:0 3px 9px #e5393530}
+.notice-card-heading{margin:0 0 15px;padding:0 0 13px;border-bottom:1px solid var(--line)}
+.notice-heading-kicker{display:block;margin-bottom:6px;color:var(--notice-accent);font-size:10px;font-weight:850;letter-spacing:1.35px}
+.notice-card .notice-card-heading h3{margin:0;color:var(--text);font-family:Inter,'Noto Sans Devanagari','Nirmala UI',system-ui,sans-serif;font-size:clamp(21px,3vw,26px);font-weight:850;line-height:1.35;letter-spacing:-.35px;text-wrap:pretty;overflow-wrap:anywhere}
+.notice-image-button{position:relative;width:100%;margin:0 0 14px;padding:7px;border:1px solid var(--line);border-radius:15px;background:var(--card);box-shadow:0 8px 22px #102a5612;overflow:hidden}
+.notice-card-image{width:100%;height:auto;max-height:none;object-fit:contain;object-position:center;background:#fff;border-radius:9px}
+.notice-image-hint{display:block;padding:8px 4px 2px;color:var(--muted);font-size:10px;font-weight:650;text-align:center;letter-spacing:.15px}
+.notice-card-footer{margin-top:12px;padding-top:12px;font-size:12px}
+html[data-theme=dark] .notice-image-button{background:#172235;border-color:#34445b;box-shadow:0 8px 22px #0003}
+@media(max-width:800px){.notice-card{padding:16px 14px 13px;border-radius:16px}.notice-card .notice-card-heading h3{font-size:22px;line-height:1.4}.notice-card-heading{margin-bottom:12px;padding-bottom:11px}.notice-image-button{padding:5px;border-radius:12px}.notice-card-image{max-height:none;border-radius:8px}.notice-image-hint{font-size:10px;padding-top:7px}}
