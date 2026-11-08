@@ -391,8 +391,15 @@ export default function App() {
     setBusy(true)
     try{
       const operations=[]
+      const existingSnapshot=await getDocs(query(collection(db,'results'),where('testId','==',test.id)))
+      const existingByStudent=new Map()
+      existingSnapshot.docs.forEach(d=>{
+        const studentId=d.data().studentId
+        if(!existingByStudent.has(studentId))existingByStudent.set(studentId,[])
+        existingByStudent.get(studentId).push(d)
+      })
       for(const row of prepared){
-        const existing=await getDocs(query(collection(db,'results'),where('testId','==',test.id),where('studentId','==',row.student.id)))
+        const existing=existingByStudent.get(row.student.id)||[]
         const data={
           testId:test.id,studentId:row.student.id,studentNameSnapshot:row.student.fullName,
           rollNumberSnapshot:row.student.rollNumber,obtainedMarks:row.marks,totalMarks:Number(test.totalMarks),
@@ -400,10 +407,10 @@ export default function App() {
           attendance:row.attendance,resultStatus:resultStatus(row.marks,test.passingMarks,row.attendance),
           publicationStatus:'Draft',updatedAt:serverTimestamp()
         }
-        if(existing.empty) operations.push({type:'set',ref:doc(collection(db,'results')),data:{...data,createdAt:serverTimestamp()}})
+        if(!existing.length) operations.push({type:'set',ref:doc(collection(db,'results')),data:{...data,createdAt:serverTimestamp()}})
         else{
-          operations.push({type:'set',ref:existing.docs[0].ref,data})
-          existing.docs.slice(1).forEach(d=>operations.push({type:'delete',ref:d.ref}))
+          operations.push({type:'set',ref:existing[0].ref,data})
+          existing.slice(1).forEach(d=>operations.push({type:'delete',ref:d.ref}))
         }
       }
       for(let i=0;i<operations.length;i+=450){
