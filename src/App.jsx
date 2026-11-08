@@ -305,11 +305,6 @@ export default function App() {
       const refs=snapshots.slice(0,names.length).flatMap(snap=>snap.docs.map(d=>({ref:d.ref,remove:true})))
       const studentUserDocs=snapshots[names.length].docs
       const credentialDocs=await getDocs(collection(db,'studentCredentials'))
-      for(let i=0;i<credentialDocs.docs.length;i+=450){
-        const batch=writeBatch(db)
-        credentialDocs.docs.slice(i,i+450).forEach(d=>batch.update(d.ref,{archived:true,archivedAt:serverTimestamp()}))
-        await batch.commit()
-      }
       for(let i=0;i<refs.length;i+=450){
         const batch=writeBatch(db)
         refs.slice(i,i+450).forEach(item=>batch.delete(item.ref))
@@ -318,6 +313,11 @@ export default function App() {
       for(let i=0;i<studentUserDocs.length;i+=450){
         const batch=writeBatch(db)
         studentUserDocs.slice(i,i+450).forEach(d=>batch.update(d.ref,{isActive:false,disabledAt:serverTimestamp()}))
+        await batch.commit()
+      }
+      for(let i=0;i<credentialDocs.docs.length;i+=450){
+        const batch=writeBatch(db)
+        credentialDocs.docs.slice(i,i+450).forEach(d=>batch.update(d.ref,{archived:true,archivedAt:serverTimestamp()}))
         await batch.commit()
       }
       setStudents([]);setTests([]);setResults([]);setAttendance([]);setCredentials([])
@@ -441,6 +441,7 @@ export default function App() {
   }
   async function markAttendance(e){
     e.preventDefault()
+    if(busy)return
     const date=form.attDate||dateKey()
     if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||Number.isNaN(new Date(date+'T00:00:00').getTime())){
       say('कृपया सही तारीख चुनें।',true);return
@@ -472,10 +473,15 @@ export default function App() {
   }
   async function addNotice(e){
     e.preventDefault()
+    if(busy)return
     const title=String(form.title||'').trim(),description=String(form.description||'').trim(),expiryDate=String(form.expiryDate||'').trim()
     if(!title&&!description&&!form.noticeImage){say('Notice में शीर्षक, संदेश या इमेज में से कुछ जोड़ें।',true);return}
-    if(expiryDate&&!/^\d{4}-\d{2}-\d{2}$/.test(expiryDate)){say('Expiry Date सही चुनें।',true);return}
-    if(expiryDate&&expiryDate<dateKey()){say('Expiry Date आज या भविष्य की तारीख होनी चाहिए।',true);return}
+    if(expiryDate){
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(expiryDate)){say('Expiry Date सही चुनें।',true);return}
+      const [year,month,day]=expiryDate.split('-').map(Number),check=new Date(year,month-1,day)
+      if(check.getFullYear()!==year||check.getMonth()!==month-1||check.getDate()!==day){say('Expiry Date वास्तविक कैलेंडर तारीख होनी चाहिए।',true);return}
+      if(expiryDate<dateKey()){say('Expiry Date आज या भविष्य की तारीख होनी चाहिए।',true);return}
+    }
     setBusy(true)
     try{
       await addDoc(collection(db,'notices'),{title,description,imageData:form.noticeImage||'',category:form.category||'General',status:'Published',visibility:'Students',createdAt:serverTimestamp(),expiryDate,updatedAt:serverTimestamp()})
@@ -484,8 +490,14 @@ export default function App() {
     finally{setBusy(false)}
   }
   function downloadBackup(){
-    const payload={exportedAt:new Date().toISOString(),students,tests,results,attendance,notices}
-    const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`SCC_Backup_${dateKey()}.json`;a.click();URL.revokeObjectURL(a.href)
+    try{
+      const payload={app:'Shiv Coaching Center',backupVersion:2,exportedAt:new Date().toISOString(),collections:{students,tests,results,attendance,notices,classes,branding}}
+      const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'})
+      const url=URL.createObjectURL(blob),a=document.createElement('a')
+      a.href=url;a.download=`SCC_Backup_${dateKey()}.json`;document.body.appendChild(a);a.click();a.remove()
+      setTimeout(()=>URL.revokeObjectURL(url),1500)
+      say('JSON Backup डाउनलोड शुरू हो गया। इसमें Classes और Website Branding भी शामिल हैं।')
+    }catch(e){say('Backup डाउनलोड नहीं हुआ: '+(e.message||e),true)}
   }
   function pdf(r){
     const d=new jsPDF();d.setFontSize(20);d.text(BRAND,105,20,{align:'center'});d.setFontSize(11);d.text('ज्ञान • अनुशासन • सफलता',105,28,{align:'center'});d.line(15,34,195,34)
@@ -525,7 +537,7 @@ export default function App() {
   {page==='mytests'&&role==='student'&&<><PageTitle title="My Tests" sub="आपकी क्लास के प्रकाशित टेस्ट"/><div className="panel"><div className="tablewrap"><table><thead><tr><th>Test</th><th>Subject</th><th>Date</th><th>Total Marks</th><th>Status</th></tr></thead><tbody>{tests.filter(x=>normalizeClass(x.className||'12th')===normalizeClass(myStudent?.className||'12th')).map(x=><tr key={x.id}><td>{x.testName}<small className="block">{x.testType||'Test'}</small></td><td>{x.subject}</td><td>{x.testDate}</td><td>{x.totalMarks}</td><td><span className="pill good">Published</span></td></tr>)}</tbody></table></div>{tests.filter(x=>normalizeClass(x.className||'12th')===normalizeClass(myStudent?.className||'12th')).length===0&&<div className="empty">अभी आपकी क्लास के लिए कोई टेस्ट प्रकाशित नहीं हुआ है।</div>}</div></>}
   {page==='myresults'&&role==='student'&&<><PageTitle title="My Results" sub="आपके प्रकाशित टेस्ट रिजल्ट"/><ResultList rows={results} tests={tests} pdf={pdf} share={share}/></>}
   {page==='performance'&&role==='student'&&<><PageTitle title="My Performance" sub="आपकी टेस्ट प्रगति"/><div className="panel chart"><ResponsiveContainer width="100%" height={260}><LineChart data={[...results].reverse().map(r=>({name:tests.find(x=>x.id===r.testId)?.testName||'Test',percentage:r.percentage}))}><CartesianGrid strokeDasharray="3 3"/><XAxis dataKey="name"/><YAxis domain={[0,100]}/><Tooltip/><Line type="monotone" dataKey="percentage" stroke="#2563eb" strokeWidth={3}/></LineChart></ResponsiveContainer></div></>}
-  {page==='attendance'&&<><PageTitle title="Attendance" sub="दैनिक उपस्थिति रिकॉर्ड"/>{role==='admin'?<div className="panel"><form onSubmit={markAttendance}><Select label="क्लास चुनें" value={selectedAttendanceClass} onChange={e=>setSelectedAttendanceClass(e.target.value)}>{classes.map(c=><option key={c}>{c}</option>)}</Select><p className="hint">केवल {selectedAttendanceClass} के Active विद्यार्थी दिखेंगे।</p><Field label="Date" type="date" value={form.attDate||dateKey()} onChange={e=>setForm({...form,attDate:e.target.value})}/>{students.filter(s=>s.status==='Active'&&normalizeClass(s.className||'12th')===normalizeClass(selectedAttendanceClass)).map(s=><div className="attrow" key={s.id}><span>{s.fullName} ({s.rollNumber})</span><select value={form[`att_${s.id}`]||'Present'} onChange={e=>setForm({...form,[`att_${s.id}`]:e.target.value})}><option>Present</option><option>Absent</option></select></div>)}{students.filter(s=>s.status==='Active'&&normalizeClass(s.className||'12th')===normalizeClass(selectedAttendanceClass)).length===0&&<div className="empty">इस क्लास में अभी कोई Active विद्यार्थी नहीं है।</div>}<Button type="submit" disabled={busy||students.filter(s=>s.status==='Active'&&normalizeClass(s.className||'12th')===normalizeClass(selectedAttendanceClass)).length===0}>{busy?'सेव हो रहा है...':'Save Attendance'}</Button></form></div>:<div className="panel"><h3>मेरी Attendance</h3><div className="stats"><div className="stat"><small>कुल दिन</small><strong>{attendance.length}</strong></div><div className="stat"><small>Present</small><strong>{attendance.filter(a=>a.status==='Present').length}</strong></div><div className="stat"><small>Absent</small><strong>{attendance.filter(a=>a.status==='Absent').length}</strong></div><div className="stat"><small>उपस्थिति</small><strong>{attendance.length?Math.round(attendance.filter(a=>a.status==='Present').length/attendance.length*100):0}%</strong></div></div><h3>दैनिक Attendance रिकॉर्ड</h3>{attendance.length?<div className="tablewrap"><table><thead><tr><th>तारीख</th><th>क्लास</th><th>स्थिति</th></tr></thead><tbody>{attendance.map(a=><tr key={a.id}><td>{a.date||'-'}</td><td>{a.className||myStudent?.className||'-'}</td><td><span className={`pill ${a.status==='Present'?'good':'bad'}`}>{a.status||'Not Marked'}</span></td></tr>)}</tbody></table></div>:<div className="empty">अभी आपकी Attendance दर्ज नहीं हुई है। Admin के Attendance सेव करते ही यहाँ दिखाई देगी।</div>}<p className="hint">Attendance पेज खोलने पर रिकॉर्ड फिर से अपडेट होकर लोड होता है।</p></div>}</>}
+  {page==='attendance'&&<><PageTitle title="Attendance" sub="दैनिक उपस्थिति रिकॉर्ड"/>{role==='admin'?<div className="panel"><form onSubmit={markAttendance}><Select label="क्लास चुनें" value={selectedAttendanceClass} onChange={e=>{setSelectedAttendanceClass(e.target.value);setForm(v=>{const next={...v};Object.keys(next).filter(k=>k.startsWith('att_')).forEach(k=>delete next[k]);return next})}}>{classes.map(c=><option key={c} value={c}>{c}</option>)}</Select><p className="hint">केवल {selectedAttendanceClass} के Active विद्यार्थी दिखेंगे।</p><Field label="Date" type="date" value={form.attDate||dateKey()} onChange={e=>setForm(v=>{const next={...v,attDate:e.target.value};Object.keys(next).filter(k=>k.startsWith('att_')).forEach(k=>delete next[k]);return next})}/>{students.filter(s=>s.status==='Active'&&normalizeClass(s.className||'12th')===normalizeClass(selectedAttendanceClass)).map(s=><div className="attrow" key={s.id}><span>{s.fullName} ({s.rollNumber})</span><select value={form[`att_${s.id}`]??attendance.find(a=>a.studentId===s.id&&a.date===(form.attDate||dateKey()))?.status??'Present'} onChange={e=>setForm(v=>({...v,[`att_${s.id}`]:e.target.value}))}><option>Present</option><option>Absent</option></select></div>)}{students.filter(s=>s.status==='Active'&&normalizeClass(s.className||'12th')===normalizeClass(selectedAttendanceClass)).length===0&&<div className="empty">इस क्लास में अभी कोई Active विद्यार्थी नहीं है।</div>}<Button type="submit" disabled={busy||students.filter(s=>s.status==='Active'&&normalizeClass(s.className||'12th')===normalizeClass(selectedAttendanceClass)).length===0}>{busy?'सेव हो रहा है...':'Save Attendance'}</Button></form></div>:<div className="panel"><h3>मेरी Attendance</h3><div className="stats"><div className="stat"><small>कुल दिन</small><strong>{attendance.length}</strong></div><div className="stat"><small>Present</small><strong>{attendance.filter(a=>a.status==='Present').length}</strong></div><div className="stat"><small>Absent</small><strong>{attendance.filter(a=>a.status==='Absent').length}</strong></div><div className="stat"><small>उपस्थिति</small><strong>{attendance.length?Math.round(attendance.filter(a=>a.status==='Present').length/attendance.length*100):0}%</strong></div></div><h3>दैनिक Attendance रिकॉर्ड</h3>{attendance.length?<div className="tablewrap"><table><thead><tr><th>तारीख</th><th>क्लास</th><th>स्थिति</th></tr></thead><tbody>{attendance.map(a=><tr key={a.id}><td>{a.date||'-'}</td><td>{a.className||myStudent?.className||'-'}</td><td><span className={`pill ${a.status==='Present'?'good':'bad'}`}>{a.status||'Not Marked'}</span></td></tr>)}</tbody></table></div>:<div className="empty">अभी आपकी Attendance दर्ज नहीं हुई है। Admin के Attendance सेव करते ही यहाँ दिखाई देगी।</div>}<p className="hint">Attendance पेज खोलने पर रिकॉर्ड फिर से अपडेट होकर लोड होता है।</p></div>}</>}
   {page==='notices'&&<><PageTitle title="Notice Board" sub="कोचिंग की नई सूचनाएँ"/>{role==='admin'&&<div className="panel"><h3>Add Notice</h3><form className="formgrid" onSubmit={addNotice}><Field label="Title (optional)" value={empty(form.title)} onChange={e=>setForm({...form,title:e.target.value})}/><Select label="Category" value={form.category||'General'} onChange={e=>setForm({...form,category:e.target.value})}><option>General</option><option>Holiday</option><option>Exam</option><option>Fee</option><option>Urgent</option></Select><label className="field full"><span>Message (optional)</span><textarea value={empty(form.description)} onChange={e=>setForm({...form,description:e.target.value})}/></label><Field label="Expiry Date (optional)" type="date" min={dateKey()} value={form.expiryDate||''} onChange={e=>setForm({...form,expiryDate:e.target.value})}/><label className="field full"><span>Notice Image / Banner</span><input type="file" accept="image/*" onChange={async e=>{try{const v=await imageToDataUrl(e.target.files?.[0]);setForm(x=>({...x,noticeImage:v}))}catch(err){say(err.message,true)}}}/></label>{form.noticeImage&&<img className="notice-preview" src={form.noticeImage} alt="Notice preview"/>}<Button type="submit" disabled={busy}>{busy?'प्रकाशित हो रहा है...':'Publish Notice'}</Button></form></div>}<div className="panel"><NoticeList rows={notices} isAdmin={role==='admin'} onDelete={setNoticeToDelete} onImageClick={setNoticeImageOpen}/></div></>}
   {page==='backup'&&role==='admin'&&<><PageTitle title="Backup & Restore" sub="अपने डेटा की सुरक्षित JSON कॉपी डाउनलोड करें"/><div className="panel"><p>यह Backup केवल ऐप में लोड किए गए डेटा का JSON Export करता है। इसे नियमित रूप से डाउनलोड करके सुरक्षित जगह रखें।</p><Button onClick={downloadBackup}><Download size={16}/> Download JSON Backup</Button><p className="hint">यह Authentication अकाउंट या Password का Backup नहीं है।</p></div><div className="panel"><h3>Temporary Sale Preparation Tool</h3><p>Demo या पुराने रिकॉर्ड हटाकर वेबसाइट को नए खरीदार के लिए खाली करें। यह Students, Tests, Results, Attendance, Student Credentials और Public Leaderboard हटाएगा। Admin account, Notices और Website Settings सुरक्षित रहेंगे।</p><p className="hint">Student Firebase Authentication accounts डिलीट नहीं होंगे; उनके पोर्टल प्रोफाइल निष्क्रिय किए जाएँगे। यह कार्रवाई वापस नहीं की जा सकती।</p><Button kind="danger" disabled={busy} onClick={resetDemoData}>{busy?'Reset चल रहा है...':'Reset Demo Data (Temporary)'}</Button></div></>}
   </div></main>
