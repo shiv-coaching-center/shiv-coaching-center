@@ -346,40 +346,84 @@ export default function App() {
     finally{setBusy(false)}
   }
   async function addTest(e){
-    e.preventDefault();setBusy(true)
-    try{await addDoc(collection(db,'tests'),{testName:form.testName,testType:form.testType||'Weekly',subject:form.subject||'Physics',className:form.className||'12th',testDate:form.testDate||dateKey(),totalMarks:Number(form.totalMarks),passingMarks:Number(form.passingMarks),description:form.description||'',status:'Published',createdAt:serverTimestamp()});setForm({});await loadData();say('टेस्ट बन गया।')}
-    catch(e){say(e.message,true)}finally{setBusy(false)}
-  }
-  async function saveMarks(e){
-    e.preventDefault();setBusy(true)
-    try{
-      const test=tests.find(x=>x.id===form.testId);if(!test)throw new Error('टेस्ट चुनें।')
-      const batchRows=students.filter(s=>s.status==='Active'&&normalizeClass(s.className||'12th')===normalizeClass(test.className||'12th'))
-      for(const s of batchRows){
-        const raw=form[`m_${s.id}`]
-        const att=form[`a_${s.id}`]||'Present'
-        if(raw===''||raw===undefined)throw new Error(`${s.fullName} के नंबर भरें या Absent चुनें।`)
-        const marks=att==='Absent'?0:Number(raw)
-        if(att!=='Absent' && (marks<0||marks>Number(test.totalMarks)))throw new Error(`${s.fullName}: नंबर की सीमा गलत है।`)
-        const existing=await getDocs(query(collection(db,'results'),where('testId','==',test.id),where('studentId','==',s.id)))
-        const data={testId:test.id,studentId:s.id,studentNameSnapshot:s.fullName,rollNumberSnapshot:s.rollNumber,obtainedMarks:marks,totalMarks:Number(test.totalMarks),passingMarks:Number(test.passingMarks),percentage:att==='Absent'?0:pct(marks,test.totalMarks),attendance:att,resultStatus:resultStatus(marks,test.passingMarks,att),publicationStatus:'Draft',updatedAt:serverTimestamp()}
-        if(existing.empty)await addDoc(collection(db,'results'),{...data,createdAt:serverTimestamp()})
-        else await updateDoc(doc(db,'results',existing.docs[0].id),data)
-      }
-      await loadData();say('सभी नंबर Draft में सेव हो गए। Publish करने से पहले जाँचें।')
-    }catch(e){say(e.message,true)}finally{setBusy(false)}
-  }
-  async function publish(testId,status){
+    e.preventDefault()
+    const testName=String(form.testName||'').trim()
+    const totalMarks=Number(form.totalMarks)
+    const passingMarks=Number(form.passingMarks)
+    if(!testName){say('टेस्ट का नाम दर्ज करें।',true);return}
+    if(!Number.isFinite(totalMarks)||totalMarks<=0){say('Total Marks शून्य से अधिक सही संख्या होनी चाहिए।',true);return}
+    if(!Number.isFinite(passingMarks)||passingMarks<0||passingMarks>totalMarks){say('Passing Marks, 0 से Total Marks के बीच रखें।',true);return}
     setBusy(true)
     try{
-      const rows=results.filter(r=>r.testId===testId)
-      const ranked=rankRows(rows)
-      for(const r of rows){
-        const rank=ranked.find(x=>x.id===r.id)?.rank ?? null
-        await updateDoc(doc(db,'results',r.id),{rank,publicationStatus:status,updatedAt:serverTimestamp()})
+      await addDoc(collection(db,'tests'),{
+        testName,testType:form.testType||'Weekly',subject:form.subject||'Physics',
+        className:String(form.className||classes[0]||'12th').trim(),
+        testDate:form.testDate||dateKey(),totalMarks,passingMarks,
+        description:String(form.description||'').trim(),status:'Published',
+        createdAt:serverTimestamp(),updatedAt:serverTimestamp()
+      })
+      setForm(v=>({...v,testName:'',totalMarks:'',passingMarks:'',description:''}))
+      await loadData();say('टेस्ट सफलतापूर्वक प्रकाशित हो गया।')
+    }catch(e){say('टेस्ट नहीं बन पाया: '+(e.code||e.message),true)}finally{setBusy(false)}
+  }
+  async function saveMarks(e){
+    e.preventDefault()
+    const test=tests.find(x=>x.id===form.testId)
+    if(!test){say('पहले टेस्ट चुनें।',true);return}
+    const batchRows=students.filter(st=>st.status==='Active'&&normalizeClass(st.className||'12th')===normalizeClass(test.className||'12th'))
+    if(!batchRows.length){say('इस टेस्ट की क्लास में कोई Active विद्यार्थी नहीं है।',true);return}
+    const prepared=[]
+    for(const st of batchRows){
+      const raw=form[`m_${st.id}`]
+      const att=form[`a_${st.id}`]||'Present'
+      if(!['Present','Absent'].includes(att)){say(`${st.fullName}: Attendance विकल्प सही नहीं है।`,true);return}
+      if(att==='Present'&&(raw===''||raw===undefined||!Number.isFinite(Number(raw)))){say(`${st.fullName} के नंबर भरें या Absent चुनें।`,true);return}
+      const marks=att==='Absent'?0:Number(raw)
+      if(att==='Present'&&(marks<0||marks>Number(test.totalMarks))){say(`${st.fullName}: नंबर 0 से ${test.totalMarks} के बीच होने चाहिए।`,true);return}
+      prepared.push({student:st,attendance:att,marks})
+    }
+    setBusy(true)
+    try{
+      const operations=[]
+      for(const row of prepared){
+        const existing=await getDocs(query(collection(db,'results'),where('testId','==',test.id),where('studentId','==',row.student.id)))
+        const data={
+          testId:test.id,studentId:row.student.id,studentNameSnapshot:row.student.fullName,
+          rollNumberSnapshot:row.student.rollNumber,obtainedMarks:row.marks,totalMarks:Number(test.totalMarks),
+          passingMarks:Number(test.passingMarks),percentage:row.attendance==='Absent'?0:pct(row.marks,test.totalMarks),
+          attendance:row.attendance,resultStatus:resultStatus(row.marks,test.passingMarks,row.attendance),
+          publicationStatus:'Draft',updatedAt:serverTimestamp()
+        }
+        if(existing.empty) operations.push({type:'set',ref:doc(collection(db,'results')),data:{...data,createdAt:serverTimestamp()}})
+        else{
+          operations.push({type:'set',ref:existing.docs[0].ref,data})
+          existing.docs.slice(1).forEach(d=>operations.push({type:'delete',ref:d.ref}))
+        }
       }
-      await loadData();say(status==='Published'?'रिजल्ट प्रकाशित हो गया।':'रिजल्ट Unpublish हो गया।')
-    }catch(e){say('Publish नहीं हुआ: '+e.message,true)}finally{setBusy(false)}
+      for(let i=0;i<operations.length;i+=450){
+        const batch=writeBatch(db)
+        operations.slice(i,i+450).forEach(op=>op.type==='delete'?batch.delete(op.ref):batch.set(op.ref,op.data,{merge:true}))
+        await batch.commit()
+      }
+      await loadData();say(`${prepared.length} विद्यार्थियों के नंबर Draft में सेव हो गए। Publish करने से पहले जाँचें।`)
+    }catch(e){say('Marks सेव नहीं हुए: '+(e.code||e.message),true)}finally{setBusy(false)}
+  }
+  async function publish(testId,status){
+    if(!['Published','Draft'].includes(status)){say('रिजल्ट की स्थिति सही नहीं है।',true);return}
+    const rows=results.filter(r=>r.testId===testId)
+    if(!rows.length){say('इस टेस्ट के नंबर अभी सेव नहीं हुए हैं। पहले Marks Entry करें।',true);return}
+    if(rows.length>450){say('एक बार में 450 से अधिक रिजल्ट प्रकाशित नहीं किए जा सकते।',true);return}
+    setBusy(true)
+    try{
+      const ranked=rankRows(rows)
+      const batch=writeBatch(db)
+      rows.forEach(r=>{
+        const rank=ranked.find(x=>x.id===r.id)?.rank??null
+        batch.update(doc(db,'results',r.id),{rank,publicationStatus:status,updatedAt:serverTimestamp()})
+      })
+      await batch.commit()
+      await loadData();say(status==='Published'?'रिजल्ट प्रकाशित हो गया।':'रिजल्ट Draft में वापस कर दिया गया।')
+    }catch(e){say('रिजल्ट अपडेट नहीं हुआ: '+(e.code||e.message),true)}finally{setBusy(false)}
   }
   async function markAttendance(e){
     e.preventDefault();setBusy(true)
