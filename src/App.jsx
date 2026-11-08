@@ -424,10 +424,13 @@ export default function App() {
   async function publish(testId,status){
     if(busy)return
     if(!['Published','Draft'].includes(status)){say('रिजल्ट की स्थिति सही नहीं है।',true);return}
-    const rows=results.filter(r=>r.testId===testId)
-    if(!rows.length){say('इस टेस्ट के नंबर अभी सेव नहीं हुए हैं। पहले Marks Entry करें।',true);return}
+    if(!testId){say('टेस्ट की जानकारी नहीं मिली।',true);return}
     setBusy(true)
     try{
+      // Always read the latest Firestore rows. React state can be stale after a fast save/class switch.
+      const snapshot=await getDocs(query(collection(db,'results'),where('testId','==',testId)))
+      const rows=snapshot.docs.map(d=>({...d.data(),id:d.id}))
+      if(!rows.length){say('इस टेस्ट के नंबर Firestore में सेव नहीं मिले। Marks Entry खोलकर पहले नंबर सेव करें।',true);return}
       const ranked=rankRows(rows)
       const rankById=new Map(ranked.map(row=>[row.id,row.rank]))
       const operations=rows.map(r=>({ref:doc(db,'results',r.id),rank:rankById.get(r.id)??null}))
@@ -436,8 +439,12 @@ export default function App() {
         operations.slice(i,i+450).forEach(op=>batch.update(op.ref,{rank:op.rank,publicationStatus:status,updatedAt:serverTimestamp()}))
         await batch.commit()
       }
-      await loadData();say(status==='Published'?'रिजल्ट प्रकाशित हो गया।':'रिजल्ट Draft में वापस कर दिया गया।')
-    }catch(e){say('रिजल्ट अपडेट नहीं हुआ: '+(e.code||e.message),true)}finally{setBusy(false)}
+      await loadData()
+      say(status==='Published'?rows.length+' विद्यार्थियों का रिजल्ट प्रकाशित हो गया।':'रिजल्ट Draft में वापस कर दिया गया।')
+    }catch(e){
+      const detail=e.code==='permission-denied'?'Firestore Rules ने Admin को Results अपडेट करने से रोका।':(e.code||e.message)
+      say('रिजल्ट अपडेट नहीं हुआ: '+detail,true)
+    }finally{setBusy(false)}
   }
   async function markAttendance(e){
     e.preventDefault()
