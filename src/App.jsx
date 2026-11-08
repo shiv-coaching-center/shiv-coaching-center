@@ -251,6 +251,39 @@ export default function App() {
     try{const rows=await getDocs(query(collection(db,'results'),where('testId','==',test.id)));const refs=[...rows.docs,doc(db,'tests',test.id)];for(let i=0;i<refs.length;i+=450){const b=writeBatch(db);refs.slice(i,i+450).forEach(x=>b.delete(x));await b.commit()}await loadData();say('टेस्ट और उससे जुड़े Results हटा दिए गए। Student और Attendance सुरक्षित हैं।')}
     catch(e){say('टेस्ट हटाया नहीं जा सका: '+(e.code||e.message),true)}finally{setBusy(false)}
   }
+  // TEMPORARY SALE-PREP RESET TOOL: remove this function and its Backup-page panel after testing.
+  async function resetDemoData(){
+    if(role!=='admin'||!db){say('यह सुविधा केवल Admin के लिए उपलब्ध है।',true);return}
+    const first=window.confirm('क्या आप सभी Student records, Tests, Results, Attendance और Student Credentials हटाना चाहते हैं? Admin account, Notices और Website Settings सुरक्षित रहेंगे।')
+    if(!first)return
+    const typed=window.prompt('स्थायी रूप से डेटा हटाने के लिए RESET टाइप करें:')
+    if(typed!=='RESET'){say('Reset रद्द कर दिया गया।');return}
+    setBusy(true)
+    try{
+      const names=['students','tests','results','attendance','studentCredentials','publicLeaderboard']
+      const snapshots=await Promise.all([
+        ...names.map(name=>getDocs(collection(db,name))),
+        getDocs(query(collection(db,'users'),where('role','==','student')))
+      ])
+      const refs=snapshots.slice(0,names.length).flatMap(snap=>snap.docs.map(d=>({ref:d.ref,remove:true})))
+      const studentUserDocs=snapshots[names.length].docs
+      for(let i=0;i<refs.length;i+=450){
+        const batch=writeBatch(db)
+        refs.slice(i,i+450).forEach(item=>batch.delete(item.ref))
+        await batch.commit()
+      }
+      for(let i=0;i<studentUserDocs.length;i+=450){
+        const batch=writeBatch(db)
+        studentUserDocs.slice(i,i+450).forEach(d=>batch.update(d.ref,{isActive:false,disabledAt:serverTimestamp()}))
+        await batch.commit()
+      }
+      setStudents([]);setTests([]);setResults([]);setAttendance([]);setCredentials([])
+      await loadData()
+      say('Demo Data साफ हो गया। Admin account, Notices और Settings सुरक्षित हैं। Student Auth accounts Firebase Authentication में बने रहेंगे, लेकिन अब पोर्टल में लॉगिन नहीं कर पाएँगे।')
+    }catch(e){say('डेटा Reset नहीं हुआ: '+(e.code||e.message),true)}
+    finally{setBusy(false)}
+  }
+
   async function saveBranding(e){
     e.preventDefault();setBusy(true)
     try{
@@ -368,7 +401,7 @@ export default function App() {
   {page==='performance'&&role==='student'&&<><PageTitle title="My Performance" sub="आपकी टेस्ट प्रगति"/><div className="panel chart"><ResponsiveContainer width="100%" height={260}><LineChart data={[...results].reverse().map(r=>({name:tests.find(x=>x.id===r.testId)?.testName||'Test',percentage:r.percentage}))}><CartesianGrid strokeDasharray="3 3"/><XAxis dataKey="name"/><YAxis domain={[0,100]}/><Tooltip/><Line type="monotone" dataKey="percentage" stroke="#2563eb" strokeWidth={3}/></LineChart></ResponsiveContainer></div></>}
   {page==='attendance'&&<><PageTitle title="Attendance" sub="दैनिक उपस्थिति रिकॉर्ड"/>{role==='admin'?<div className="panel"><form onSubmit={markAttendance}><Select label="क्लास चुनें" value={selectedAttendanceClass} onChange={e=>setSelectedAttendanceClass(e.target.value)}>{classes.map(c=><option key={c}>{c}</option>)}</Select><p className="hint">केवल {selectedAttendanceClass} के Active विद्यार्थी दिखेंगे।</p><Field label="Date" type="date" value={form.attDate||dateKey()} onChange={e=>setForm({...form,attDate:e.target.value})}/>{students.filter(s=>s.status==='Active'&&(s.className||'12th')===selectedAttendanceClass).map(s=><div className="attrow" key={s.id}><span>{s.fullName} ({s.rollNumber})</span><select value={form[`att_${s.id}`]||'Present'} onChange={e=>setForm({...form,[`att_${s.id}`]:e.target.value})}><option>Present</option><option>Absent</option></select></div>)}<Button type="submit">Save Attendance</Button></form></div>:<div className="panel"><p>Total Classes: {attendance.length}</p><p>Present: {attendance.filter(a=>a.status==='Present').length}</p><p>Absent: {attendance.filter(a=>a.status==='Absent').length}</p><p>Attendance: {attendance.length?Math.round(attendance.filter(a=>a.status==='Present').length/attendance.length*100):0}%</p></div>}</>}
   {page==='notices'&&<><PageTitle title="Notice Board" sub="कोचिंग की नई सूचनाएँ"/>{role==='admin'&&<div className="panel"><h3>Add Notice</h3><form className="formgrid" onSubmit={addNotice}><Field label="Title (optional)" value={empty(form.title)} onChange={e=>setForm({...form,title:e.target.value})}/><Select label="Category" value={form.category||'General'} onChange={e=>setForm({...form,category:e.target.value})}><option>General</option><option>Holiday</option><option>Exam</option><option>Fee</option><option>Urgent</option></Select><label className="field full"><span>Message (optional)</span><textarea value={empty(form.description)} onChange={e=>setForm({...form,description:e.target.value})}/></label><label className="field full"><span>Notice Image / Banner</span><input type="file" accept="image/*" onChange={async e=>{try{const v=await imageToDataUrl(e.target.files?.[0]);setForm(x=>({...x,noticeImage:v}))}catch(err){say(err.message,true)}}}/></label>{form.noticeImage&&<img className="notice-preview" src={form.noticeImage} alt="Notice preview"/>}<Button type="submit">Publish Notice</Button></form></div>}<div className="panel"><NoticeList rows={notices} isAdmin={role==='admin'} onDelete={setNoticeToDelete} onImageClick={setNoticeImageOpen}/></div></>}
-  {page==='backup'&&role==='admin'&&<><PageTitle title="Backup & Restore" sub="अपने डेटा की सुरक्षित JSON कॉपी डाउनलोड करें"/><div className="panel"><p>यह Backup केवल ऐप में लोड किए गए डेटा का JSON Export करता है। इसे नियमित रूप से डाउनलोड करके सुरक्षित जगह रखें।</p><Button onClick={downloadBackup}><Download size={16}/> Download JSON Backup</Button><p className="hint">यह Authentication अकाउंट या Password का Backup नहीं है।</p></div></>}
+  {page==='backup'&&role==='admin'&&<><PageTitle title="Backup & Restore" sub="अपने डेटा की सुरक्षित JSON कॉपी डाउनलोड करें"/><div className="panel"><p>यह Backup केवल ऐप में लोड किए गए डेटा का JSON Export करता है। इसे नियमित रूप से डाउनलोड करके सुरक्षित जगह रखें।</p><Button onClick={downloadBackup}><Download size={16}/> Download JSON Backup</Button><p className="hint">यह Authentication अकाउंट या Password का Backup नहीं है।</p></div><div className="panel"><h3>Temporary Sale Preparation Tool</h3><p>Demo या पुराने रिकॉर्ड हटाकर वेबसाइट को नए खरीदार के लिए खाली करें। यह Students, Tests, Results, Attendance, Student Credentials और Public Leaderboard हटाएगा। Admin account, Notices और Website Settings सुरक्षित रहेंगे।</p><p className="hint">Student Firebase Authentication accounts डिलीट नहीं होंगे; उनके पोर्टल प्रोफाइल निष्क्रिय किए जाएँगे। यह कार्रवाई वापस नहीं की जा सकती।</p><Button kind="danger" disabled={busy} onClick={resetDemoData}>{busy?'Reset चल रहा है...':'Reset Demo Data (Temporary)'}</Button></div></>}
   </div></main>
     {noticeToDelete&&<div className="dialog-backdrop"><div className="confirm-dialog" role="dialog" aria-modal="true"><h3>Notice हटाएँ?</h3><p>क्या आप सच में यह notice हटाना चाहते हैं?</p><div className="dialog-actions"><Button kind="soft" disabled={busy} onClick={()=>setNoticeToDelete(null)}>रद्द करो</Button><Button kind="danger" disabled={busy} onClick={()=>deleteNotice(noticeToDelete)}>{busy?'हटाया जा रहा है...':'हाँ, हटाओ'}</Button></div></div></div>}
     {noticeImageOpen&&<div className="image-lightbox" onClick={()=>setNoticeImageOpen('')}><button className="lightbox-close" aria-label="Close image" onClick={()=>setNoticeImageOpen('')}>×</button><img src={noticeImageOpen} alt="Notice enlarged" onClick={e=>e.stopPropagation()}/></div>}
