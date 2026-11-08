@@ -353,9 +353,10 @@ export default function App() {
     const testName=String(form.testName||'').trim()
     const totalMarks=Number(form.totalMarks)
     const passingMarks=Number(form.passingMarks)
-    const className=String(form.className||'').trim()
+    const selectedClass=String(form.className||'').trim()
+    const className=classes.find(c=>normalizeClass(c)===normalizeClass(selectedClass))
     if(!testName){say('टेस्ट का नाम दर्ज करें।',true);return}
-    if(!className||!classes.some(c=>String(c).trim()===className)){say('टेस्ट प्रकाशित करने से पहले क्लास चुनें।',true);return}
+    if(!selectedClass||!className){say('टेस्ट प्रकाशित करने से पहले उपलब्ध क्लास चुनें।',true);return}
     if(!Number.isFinite(totalMarks)||totalMarks<=0){say('Total Marks शून्य से अधिक सही संख्या होनी चाहिए।',true);return}
     if(!Number.isFinite(passingMarks)||passingMarks<0||passingMarks>totalMarks){say('Passing Marks, 0 से Total Marks के बीच रखें।',true);return}
     setBusy(true)
