@@ -460,7 +460,7 @@ export default function App() {
     e.preventDefault()
     const title=String(form.title||'').trim(),description=String(form.description||'').trim(),expiryDate=String(form.expiryDate||'').trim()
     if(!title&&!description&&!form.noticeImage){say('Notice में शीर्षक, संदेश या इमेज में से कुछ जोड़ें।',true);return}
-    if(expiryDate&&!/^\\d{4}-\\d{2}-\\d{2}$/.test(expiryDate)){say('Expiry Date सही चुनें।',true);return}
+    if(expiryDate&&!/^\d{4}-\d{2}-\d{2}$/.test(expiryDate)){say('Expiry Date सही चुनें।',true);return}
     if(expiryDate&&expiryDate<dateKey()){say('Expiry Date आज या भविष्य की तारीख होनी चाहिए।',true);return}
     setBusy(true)
     try{
