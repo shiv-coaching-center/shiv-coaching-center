@@ -10,7 +10,7 @@ import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianG
 const BRAND = 'SHIV COACHING CENTER'
 const empty = (v='') => v ?? ''
 function normalizeClass(value){
-  const clean=String(value||'').trim().toLowerCase().replace(/\\s+/g,' ')
+  const clean=String(value||'').trim().toLowerCase().replace(/\s+/g,' ')
   if(['10th','10','high school','highschool','high-school','हाई स्कूल'].includes(clean)) return '10th'
   if(['12th','12','intermediate','inter','इंटर','इंटरमीडिएट'].includes(clean)) return '12th'
   return clean
@@ -428,7 +428,7 @@ export default function App() {
   async function markAttendance(e){
     e.preventDefault()
     const date=form.attDate||dateKey()
-    if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(date)||Number.isNaN(new Date(date+'T00:00:00').getTime())){
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||Number.isNaN(new Date(date+'T00:00:00').getTime())){
       say('कृपया सही तारीख चुनें।',true);return
     }
     const classRows=students.filter(st=>st.status==='Active'&&normalizeClass(st.className||'12th')===normalizeClass(selectedAttendanceClass))
