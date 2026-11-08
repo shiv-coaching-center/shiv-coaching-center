@@ -541,8 +541,8 @@ function NoticeList({rows,isAdmin=false,onDelete=()=>{},onImageClick=()=>{}}){
     const message=n.description||'',long=message.length>220,open=!!expanded[n.id]
     return <article className={'notice-card tone-'+cat.tone} key={n.id}>
       <div className="notice-card-top"><span className="notice-category">{cat.emoji} {cat.label}</span>{isNew&&<span className="notice-new">NEW</span>}</div>
-      {n.title&&<h3>{n.title}</h3>}
-      {n.imageData&&<button type="button" className="notice-image-button" onClick={()=>onImageClick(n.imageData)} aria-label="इमेज बड़ी करके देखें"><img className="notice-card-image" src={n.imageData} alt={n.title||'Notice image'}/></button>}
+      {n.title&&<div className="notice-card-heading"><span className="notice-heading-kicker">SHIV COACHING CENTER · NOTICE</span><h3>{n.title}</h3></div>}
+      {n.imageData&&<button type="button" className="notice-image-button" onClick={()=>onImageClick(n.imageData)} aria-label="इमेज बड़ी करके देखें"><img className="notice-card-image" src={n.imageData} alt={n.title||'Notice image'}/><span className="notice-image-hint">इमेज देखने के लिए टैप करें</span></button>}
       {message&&<div className={'notice-message '+(long&&!open?'notice-message-clamp':'')}>{message}</div>}
       {long&&<button type="button" className="read-more" onClick={()=>setExpanded(v=>({...v,[n.id]:!v[n.id]}))}>{open?'कम पढ़ें':'और पढ़ें'}</button>}
       <div className="notice-card-footer"><span>🗓️ {relative(n.createdAt)}{created&&!Number.isNaN(created.getTime())?' · '+created.toLocaleDateString('hi-IN',{day:'numeric',month:'short',year:'numeric'}):''}</span>{isAdmin&&<button type="button" className="notice-delete" onClick={()=>onDelete(n)}>🗑️ Delete</button>}</div>
